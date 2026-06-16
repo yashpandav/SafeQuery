@@ -1,0 +1,39 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "database_connection"
+
+  derivedRoles:
+    name: db_conn_derived
+    definitions:
+      - name: same_org_member
+        parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
+        condition:
+          match:
+            expr: request.resource.attr.org_id == request.principal.attr.org_id
+
+  rules:
+    # Only admins and owners can create, update, or delete database connections
+    - actions: ["create", "update", "delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_member"]
+      roles: ["admin", "owner"]
+
+    # Admins and owners can test connectivity and view full connection details
+    - actions: ["read", "test_connection"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_member"]
+      roles: ["admin", "owner"]
+
+    # Reviewers and analysts can read connection metadata (name, env, type) but not credentials
+    # The API layer strips credential fields before returning to these roles
+    - actions: ["read_metadata"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_member"]
+      roles: ["reviewer", "analyst"]
+
+    # Credentials (raw) must never be returned to any non-admin role
+    - actions: ["read_credentials"]
+      effect: EFFECT_DENY
+      roles: ["reviewer", "analyst", "viewer"]

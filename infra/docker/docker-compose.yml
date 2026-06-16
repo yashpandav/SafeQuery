@@ -1,0 +1,102 @@
+name: safequery
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: safequery-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-safequery}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-safequery_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-safequery}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - safequery-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-safequery} -d ${POSTGRES_DB:-safequery}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: safequery-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:-redis_dev_password}
+      --appendonly yes
+      --appendfsync everysec
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - safequery-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_dev_password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: safequery-keycloak
+    restart: unless-stopped
+    # start-dev: no HTTPS required locally; --import-realm loads realm-export on first boot
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin_dev_password}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-safequery}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-safequery_dev}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_LOG_LEVEL: INFO
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - safequery-net
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    container_name: safequery-cerbos
+    restart: unless-stopped
+    command: server --config=/config/config.yaml
+    ports:
+      - "${CERBOS_HTTP_PORT:-3592}:3592"
+      - "${CERBOS_GRPC_PORT:-3593}:3593"
+    volumes:
+      - ./cerbos/config.yaml:/config/config.yaml:ro
+      - ./cerbos/policies:/policies:ro
+    networks:
+      - safequery-net
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  safequery-net:
+    driver: bridge

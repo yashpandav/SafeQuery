@@ -1,0 +1,51 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "approval_request"
+
+  derivedRoles:
+    name: approval_derived
+    definitions:
+      - name: same_org_member
+        parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
+        condition:
+          match:
+            expr: request.resource.attr.org_id == request.principal.attr.org_id
+
+      - name: request_submitter
+        parentRoles: ["analyst", "admin", "owner"]
+        condition:
+          match:
+            expr: >
+              request.resource.attr.org_id == request.principal.attr.org_id &&
+              request.resource.attr.submitted_by == request.principal.id
+
+  rules:
+    # Reviewers, admins, and owners can approve or reject pending requests
+    - actions: ["approve", "reject"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_member"]
+      roles: ["reviewer", "admin", "owner"]
+      condition:
+        match:
+          expr: request.resource.attr.status == "PENDING"
+
+    # Reviewers can view all requests in their org
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_member"]
+      roles: ["reviewer", "admin", "owner"]
+
+    # Analysts can only view their own submitted requests
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["request_submitter"]
+
+    # Nobody can approve their own request (four-eyes principle)
+    - actions: ["approve", "reject"]
+      effect: EFFECT_DENY
+      roles: ["*"]
+      condition:
+        match:
+          expr: request.resource.attr.submitted_by == request.principal.id
