@@ -1,0 +1,13 @@
+---
+apiVersion: api.cerbos.dev/v1
+derivedRoles:
+  name: audit_roles
+  definitions:
+    # The user who is the actor recorded in this specific audit log entry
+    - name: log_actor
+      parentRoles: ["analyst", "admin", "owner", "reviewer"]
+      condition:
+        match:
+          expr: >
+            request.resource.attr.org_id == request.principal.attr.org_id &&
+            request.resource.attr.actor_id == request.principal.id

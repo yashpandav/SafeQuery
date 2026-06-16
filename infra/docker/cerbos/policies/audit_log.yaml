@@ -3,43 +3,27 @@ apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   version: "default"
   resource: "audit_log"
-
-  derivedRoles:
-    name: audit_derived
-    definitions:
-      - name: same_org_member
-        parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
-        condition:
-          match:
-            expr: request.resource.attr.org_id == request.principal.attr.org_id
-
-      - name: log_actor
-        parentRoles: ["analyst", "admin", "owner", "reviewer"]
-        condition:
-          match:
-            expr: >
-              request.resource.attr.org_id == request.principal.attr.org_id &&
-              request.resource.attr.actor_id == request.principal.id
+  importDerivedRoles:
+    - common_roles
+    - audit_roles
 
   rules:
-    # Admins and owners can read all audit logs and verify hash-chain integrity
+    # ── Admins and owners can read all audit logs and run integrity checks ──
     - actions: ["read", "verify_integrity"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["admin", "owner"]
+      derivedRoles: ["same_org_admin"]
 
-    # Reviewers can read audit logs (needed for governance oversight)
+    # ── Reviewers can read audit logs for governance oversight ──
     - actions: ["read"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["reviewer"]
+      derivedRoles: ["same_org_approver"]
 
-    # Users can read their own audit log entries (transparency)
+    # ── Users can read their own audit log entries (transparency) ──
     - actions: ["read"]
       effect: EFFECT_ALLOW
       derivedRoles: ["log_actor"]
 
-    # Audit logs are append-only — nobody can delete or modify them
+    # ── Audit logs are append-only — nobody can delete or modify entries ──
     - actions: ["delete", "update"]
       effect: EFFECT_DENY
       roles: ["*"]

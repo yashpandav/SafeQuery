@@ -3,37 +3,30 @@ apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   version: "default"
   resource: "database_connection"
-
-  derivedRoles:
-    name: db_conn_derived
-    definitions:
-      - name: same_org_member
-        parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
-        condition:
-          match:
-            expr: request.resource.attr.org_id == request.principal.attr.org_id
+  importDerivedRoles:
+    - common_roles
 
   rules:
-    # Only admins and owners can create, update, or delete database connections
+    # ── Only admins and owners can create, update, or delete connections ──
     - actions: ["create", "update", "delete"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["admin", "owner"]
+      derivedRoles: ["same_org_admin"]
 
-    # Admins and owners can test connectivity and view full connection details
+    # ── Admins and owners can test connectivity and view full connection details ──
     - actions: ["read", "test_connection"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["admin", "owner"]
+      derivedRoles: ["same_org_admin"]
 
-    # Reviewers and analysts can read connection metadata (name, env, type) but not credentials
-    # The API layer strips credential fields before returning to these roles
+    # ── All org members can read connection metadata (name, env) ──
     - actions: ["read_metadata"]
       effect: EFFECT_ALLOW
       derivedRoles: ["same_org_member"]
-      roles: ["reviewer", "analyst"]
 
-    # Credentials (raw) must never be returned to any non-admin role
+    # ── Raw credentials must never leave the TRE — deny non-admin roles explicitly ──
+    - actions: ["read_credentials"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]
+
     - actions: ["read_credentials"]
       effect: EFFECT_DENY
       roles: ["reviewer", "analyst", "viewer"]

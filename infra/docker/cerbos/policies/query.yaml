@@ -3,45 +3,25 @@ apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   version: "default"
   resource: "query"
-
-  # Derived roles make conditions reusable across rules.
-  derivedRoles:
-    name: query_derived
-    definitions:
-      # User belongs to the same org as the resource
-      - name: same_org_member
-        parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
-        condition:
-          match:
-            expr: request.resource.attr.org_id == request.principal.attr.org_id
-
-      # User is the original submitter of this query
-      - name: query_owner
-        parentRoles: ["analyst", "admin", "owner"]
-        condition:
-          match:
-            expr: >
-              request.resource.attr.org_id == request.principal.attr.org_id &&
-              request.resource.attr.submitted_by == request.principal.id
+  importDerivedRoles:
+    - common_roles
+    - query_roles
 
   rules:
     # ── Submit a natural-language query (generates SQL, does not execute yet) ──
     - actions: ["submit"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["analyst", "admin", "owner"]
+      derivedRoles: ["same_org_submitter"]
 
-    # ── View query results (masked PII already applied by TRE before reaching here) ──
+    # ── View query results (masked PII already applied by TRE) ──
     - actions: ["read_results"]
       effect: EFFECT_ALLOW
       derivedRoles: ["same_org_member"]
-      roles: ["analyst", "reviewer", "admin", "owner", "viewer"]
 
-    # ── Approve or reject a CRITICAL query (queued approval request) ──
+    # ── Approve or reject a CRITICAL query ──
     - actions: ["approve", "reject"]
       effect: EFFECT_ALLOW
-      derivedRoles: ["same_org_member"]
-      roles: ["reviewer", "admin", "owner"]
+      derivedRoles: ["same_org_approver"]
       condition:
         match:
           expr: request.resource.attr.risk_level == "CRITICAL"
@@ -55,7 +35,8 @@ resourcePolicy:
           expr: request.resource.attr.risk_level == "SECURITY_INCIDENT"
 
     # ── Production environment writes require explicit approval flow ──
-    # (Analysts cannot bypass this even for WARNING-level writes)
+    # Analysts cannot bypass this regardless of risk level.
+    # Reviewers/admins/owners can execute writes after approval.
     - actions: ["execute_write"]
       effect: EFFECT_DENY
       roles: ["analyst"]

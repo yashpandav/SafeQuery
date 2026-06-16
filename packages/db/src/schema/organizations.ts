@@ -1,5 +1,6 @@
-import { pgTable, uuid, text, timestamp, unique } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, timestamp, primaryKey } from 'drizzle-orm/pg-core'
 import { platformRoleEnum } from './enums'
+import { users } from './users'
 
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -15,11 +16,13 @@ export const organizationMembers = pgTable(
     orgId: uuid('org_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
     platformRole: platformRoleEnum('platform_role').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [unique('organization_members_pkey').on(t.orgId, t.userId)],
+  (t) => [primaryKey({ columns: [t.orgId, t.userId] })],
 ).enableRLS()
 
 export const invitations = pgTable('invitations', {

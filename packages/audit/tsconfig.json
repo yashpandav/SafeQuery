@@ -1,0 +1,13 @@
+{
+  "extends": "@repo/typescript-config/node-library.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@repo/db": ["../db/src/index.ts"],
+      "@repo/db/schema": ["../db/src/schema/index.ts"],
+      "@repo/types": ["../types/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}

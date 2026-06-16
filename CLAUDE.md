@@ -11,38 +11,37 @@ SafeQuery is an **Enterprise AI Database Governance Platform** — a control pla
 - `Docs/02_TECHNICAL_ARCHITECTURE.md` — TAD, system diagram, data model, ADRs
 - `Docs/03_SECURITY_AND_ACCESS.md` — identity/auth/authz, defense-in-depth, threat model
 - `Docs/04_FEATURE_TICKET_LIST.md` — engineering backlog, epics, phases P0–P5
-- `Docs/PROOF_OF_CONCEPT.md` — complete reference spec (789 lines, canonical truth)
+- `Docs/PROOF_OF_CONCEPT.md` — complete reference spec (canonical truth)
 
 ---
 
-## Monorepo Structure (Target Layout)
+## Monorepo Structure (Actual Current State)
 
 ```
 my-turborepo/
 ├── apps/
-│   ├── web/          # Next.js 16 — user-facing UI (exists, early stage)
-│   ├── api/          # Express + tRPC — core API server (NOT YET CREATED)
-│   ├── ai-service/   # Vercel AI SDK — SQL generation (NOT YET CREATED)
-│   ├── tre-dispatcher/ # BullMQ job dispatch (NOT YET CREATED)
-│   └── tre-executor/   # DB execution worker (NOT YET CREATED)
+│   ├── web/              # Next.js 16 — early stage, tRPC client wired to apps/api
+│   ├── api/              # Express + tRPC — core API server ✅ BUILT
+│   ├── ai-service/       # Vercel AI SDK — SQL generation (NOT YET CREATED)
+│   ├── tre-dispatcher/   # BullMQ job dispatch (NOT YET CREATED)
+│   └── tre-executor/     # DB execution worker (NOT YET CREATED)
 ├── packages/
-│   ├── ui/           # Shared React components (exists)
-│   ├── types/        # Shared Zod schemas + TypeScript types (NOT YET CREATED)
-│   ├── auth/         # Keycloak OIDC + PASETO token helpers (NOT YET CREATED)
-│   ├── db/           # Drizzle ORM schema + RLS + migrations (NOT YET CREATED)
-│   ├── sql-validator/ # AST parsing, Cerbos decisions, row-filter injection (NOT YET CREATED)
-│   ├── policy-client/ # Cerbos gRPC client wrapper (NOT YET CREATED)
-│   ├── cerbos-policies/ # Cerbos .yaml policy files (NOT YET CREATED)
-│   ├── audit/        # Hash-chain audit writer + verify-integrity (NOT YET CREATED)
-│   ├── rate-limit/   # rate-limiter-flexible wrappers (NOT YET CREATED)
-│   ├── eslint-config/ # Shared ESLint configs (exists)
-│   └── typescript-config/ # Shared TS configs (exists)
+│   ├── ui/               # Shared React components ✅ EXISTS
+│   ├── types/            # Shared Zod schemas + TypeScript types ✅ BUILT
+│   ├── auth/             # Keycloak OIDC + PASETO v3.local helpers ✅ BUILT
+│   ├── db/               # Drizzle ORM schema + RLS + migrations ✅ BUILT
+│   ├── sql-validator/    # AST parsing, Cerbos decisions, row-filter injection (NOT YET CREATED)
+│   ├── policy-client/    # Cerbos HTTP client wrapper ✅ BUILT
+│   ├── audit/            # Hash-chain audit writer + verify-integrity ✅ BUILT
+│   ├── rate-limit/       # rate-limiter-flexible wrappers (NOT YET CREATED)
+│   ├── eslint-config/    # Shared ESLint configs ✅ EXISTS
+│   └── typescript-config/ # Shared TS configs ✅ EXISTS
 ├── infra/
-│   ├── docker/       # docker-compose.yml for local dev (NOT YET CREATED)
-│   ├── k8s/          # Helm charts / manifests (Phase 4)
-│   └── terraform/    # IaC (Phase 5)
-├── Docs/             # Full specifications (READ THESE)
-├── CLAUDE.md         # This file
+│   ├── docker/           # docker-compose.yml + Cerbos policies + Keycloak realm ✅ BUILT
+│   ├── k8s/              # Helm charts / manifests (Phase 4)
+│   └── terraform/        # IaC (Phase 5)
+├── Docs/                 # Full specifications (READ THESE)
+├── CLAUDE.md             # This file
 ├── turbo.json
 ├── pnpm-workspace.yaml
 └── package.json
@@ -55,14 +54,14 @@ my-turborepo/
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 16, React 19, TypeScript 5.9, Tailwind CSS, tRPC 11, TanStack Query 5, Zod 4 |
-| Backend API | Express, TypeScript 5.9, tRPC 11, Zod 4, trpc-to-openapi (Scalar `/docs`) |
-| Database (app) | PostgreSQL + Drizzle ORM, Row-Level Security on `org_id` |
-| Identity | Keycloak (OIDC, off-the-shelf container) |
-| Sessions/Tokens | PASETO (`v4.local` for sessions, `v4.public` for service-to-service) |
-| Authorization | Cerbos (gRPC, attribute-based policy decision point) |
+| Backend API | Express, TypeScript 5.9, tRPC 11, Zod 4 |
+| Database (app) | PostgreSQL 16 + Drizzle ORM 0.44, Row-Level Security on `org_id` |
+| Identity | Keycloak 24 (OIDC, off-the-shelf container) |
+| Sessions/Tokens | PASETO **v3.local** (AES-256-CTR + HMAC-SHA384 via Node.js native crypto) |
+| Authorization | Cerbos 0.28 (HTTP, attribute-based policy decision point) |
 | AI | Vercel AI SDK, structured outputs via Zod, provider pattern |
 | SQL Processing | node-sql-parser (AST), Cerbos decisions, row-filter injection |
-| Job Queue | BullMQ + Redis |
+| Job Queue | BullMQ + Redis 7 |
 | DB Execution | pg + pg-cursor (row caps), worker_threads (P1), Docker (P2), k8s (P3+) |
 | Secret Mgmt | AES-256-GCM envelope (P1) → HashiCorp Vault dynamic secrets (P3) |
 | Audit | SHA-256 hash chain (append-only, verify-integrity endpoint) |
@@ -133,7 +132,74 @@ Custom roles (defined per org in DB) specify: allowed tables, allowed columns, a
 
 `organizations`, `users`, `custom_roles`, `environments`, `database_connections`, `schema_snapshots`, `policies`, `query_logs`, `approval_requests`, `audit_logs`, `invitations`, `organization_members`
 
-All tables have `org_id` and PostgreSQL RLS policies enforcing tenant isolation at the database level.
+- All tenant-scoped tables have `org_id` with PostgreSQL RLS (`current_setting('app.current_org_id')::uuid`)
+- `users` intentionally has NO RLS — resolved before org context is set
+- `organization_members` has a composite primary key `(org_id, user_id)`
+- `audit_logs` has `prev_hash` + `hash` columns forming a SHA-256 hash chain
+
+RLS policies live in `packages/db/src/rls-policies.sql` (run after `drizzle-kit migrate`).
+
+---
+
+## Packages Architecture
+
+### `packages/types`
+Shared Zod schemas and TypeScript types. All schemas used at system boundaries.
+Key exports: `RiskLevel`, `PlatformRole`, `AuditAction`, `WriteAuditLog`, `QueryLog`, etc.
+
+### `packages/db`
+Drizzle ORM schema, relations, DB client, RLS SQL.
+Key exports: `createDbClient()`, `withOrgContext()`, `DbClient`, all table definitions.
+Run `pnpm --filter @repo/db db:generate` then `db:migrate` after schema changes.
+
+### `packages/auth`
+PASETO v3.local session tokens + Keycloak OIDC JWT verification.
+Key exports: `signSession()`, `verifySession()`, `verifyKeycloakToken()`, `extractBearerToken()`.
+**Note:** v3.local (not v4) — `paseto` npm package does not implement XChaCha20 (v4.local).
+
+### `packages/policy-client`
+Cerbos HTTP client wrapper with typed check functions per resource.
+Key exports: `createCerbosClient()`, `checkQuery()`, `checkApproval()`, `checkDatabaseConnection()`, `checkAuditLog()`, `canSubmitQuery()`, `canApproveQuery()`.
+
+### `packages/audit`
+Hash-chain audit log writer and integrity verifier.
+Key exports: `writeAuditLog(db, entry)`, `verifyIntegrity(db, orgId)`.
+Writer uses `db.transaction()` + `SELECT FOR UPDATE` to serialize concurrent writes.
+
+### `apps/api`
+Express server with tRPC router. Three-tier procedure hierarchy:
+- `baseProcedure` — public
+- `authedProcedure` — requires valid PASETO v3.local token
+- `orgProcedure` — requires valid token + membership in org from `X-Org-Id` header
+
+Context includes `db` (DrizzleClient) and `cerbos` (CerbosClient) singletons.
+Env vars: `DATABASE_URL`, `PASETO_LOCAL_KEY` (64 hex chars), `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `CERBOS_URL`, `CORS_ORIGIN`.
+
+---
+
+## Infrastructure
+
+### Docker Compose (`infra/docker/docker-compose.yml`)
+4 services: `postgres:16-alpine`, `redis:7-alpine`, `keycloak:24.0`, `cerbos:latest`.
+Copy `infra/docker/.env.example` → `infra/docker/.env` before running.
+
+### Cerbos Policies (`infra/docker/cerbos/policies/`)
+Policy files follow Cerbos `api.cerbos.dev/v1` schema:
+- Derived roles are in **separate files** (`derived_roles_*.yaml`) — NOT inline in resource policies
+- Resource policies use `importDerivedRoles:` to reference them
+- `derived_roles_common.yaml` — `same_org_member`, `same_org_submitter`, `same_org_approver`, `same_org_admin`
+- `derived_roles_query.yaml` — `query_owner`
+- `derived_roles_approval.yaml` — `request_submitter`
+- `derived_roles_audit.yaml` — `log_actor`
+
+### Keycloak (`infra/docker/keycloak/safequery-realm.json`)
+Realm `safequery`, client `safequery-web` (public PKCE), client `safequery-api` (confidential).
+
+---
+
+## Module Resolution Pattern
+
+All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconfig) and export raw TypeScript source files directly (`"exports": { ".": "./src/index.ts" }`). No build step for packages. TSConfigs have explicit `paths` mappings for workspace packages.
 
 ---
 
@@ -156,26 +222,40 @@ All tables have `org_id` and PostgreSQL RLS policies enforcing tenant isolation 
 
 ## Phase Build Plan
 
-| Phase | Focus | Key Deliverables |
-|-------|-------|-----------------|
-| P0 | Foundation | Repo structure, auth module, DB schema+RLS, Docker Compose |
-| P1 | **The Differentiator** | Full SAFE/WARNING/CRITICAL pipeline, AI generation, validation, TRE (worker_threads), audit hash-chain — **fully demoable** |
-| P2 | Governance | Multi-tenancy, custom-roles UI, approval workflow, multiple DB connections |
-| P3 | Real Isolation | Container-based TRE, Vault dynamic secrets, separate dispatcher/executor apps |
-| P4 | Cloud-Native | k8s deployment, k3s VPS, Vercel, CI/CD (GitHub Actions) |
-| P5 | Observability | OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform, recorded demo |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
+| P1 | **The Differentiator** | 🔲 Next — AI service, sql-validator, risk engine, TRE executor, query pipeline |
+| P2 | Governance | 🔲 Multi-tenancy UI, custom-roles, approval workflow, multiple DB connections |
+| P3 | Real Isolation | 🔲 Container TRE, Vault secrets, dispatcher/executor apps |
+| P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
+| P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
 
-**Current state: P0 scaffolding exists. Next: implement P0 packages then P1 pipeline.**
+**P1 starting point:** `packages/sql-validator` (AST + Cerbos validation) and `apps/ai-service` (Vercel AI SDK, structured SQL generation). See `Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042.
 
 ---
 
 ## Development Commands
 
 ```bash
-pnpm dev          # start all apps in dev mode (Turborepo parallel)
-pnpm build        # build all apps/packages
-pnpm lint         # lint all
-pnpm check-types  # TypeScript check all
+# Start all services
+docker compose -f infra/docker/docker-compose.yml up -d
+
+# Install deps
+pnpm install
+
+# Dev mode (all apps)
+pnpm dev
+
+# Type-check all packages
+pnpm check-types
+
+# Database migrations (run after schema changes)
+pnpm --filter @repo/db db:generate    # generate migration files
+pnpm --filter @repo/db db:migrate     # apply to DB (DATABASE_URL must be set)
+
+# After migrate: apply RLS policies
+# psql $DATABASE_URL -f packages/db/src/rls-policies.sql
 ```
 
 Node >= 18 required. pnpm 9 required.
@@ -186,13 +266,14 @@ Node >= 18 required. pnpm 9 required.
 
 - **PostgreSQL-only in v1** — covers Supabase, Neon, RDS, self-hosted
 - **Keycloak not hand-rolled auth** — integrates with existing enterprise IdPs
-- **PASETO not JWT** — eliminates algorithm-confusion attacks (`v4.local` encrypted sessions)
-- **Cerbos not hand-rolled RBAC** — externalized, auditable, attribute-based
+- **PASETO v3.local not JWT** — eliminates algorithm-confusion attacks; v3 (not v4) because `paseto` npm does not implement v4.local (XChaCha20 is not in Node.js native crypto)
+- **Cerbos not hand-rolled RBAC** — externalized, auditable, attribute-based; derived roles in separate files per Cerbos spec
 - **Custom roles as DB rows** — org admins configure without redeploy
 - **Drizzle ORM** — SQL migrations as code, typed, RLS defined in schema
-- **tRPC for internal APIs** — end-to-end type safety; trpc-to-openapi for external REST surface
+- **tRPC for internal APIs** — end-to-end type safety
 - **No direct API→customer DB** — all execution through queue-based TRE
 - **Hash-chain audit** — tamper-evident without blockchain operational overhead
+- **Source package pattern** — packages export `.ts` directly, `moduleResolution: Bundler`, no build step
 
 ---
 
@@ -205,6 +286,7 @@ Node >= 18 required. pnpm 9 required.
 - tRPC procedures in `apps/api/` — never define API logic in `apps/web/`
 - Cerbos decisions are the authorization source of truth — never replicate logic in application code
 - No raw SQL strings passed to database — always through Drizzle or parameterized pg queries
+- Audit writes always go through `writeAuditLog()` — never insert directly to `audit_logs`
 
 ---
 

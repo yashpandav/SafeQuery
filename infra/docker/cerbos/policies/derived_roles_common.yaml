@@ -1,0 +1,32 @@
+---
+apiVersion: api.cerbos.dev/v1
+derivedRoles:
+  name: common_roles
+  definitions:
+    # Any platform member in the same org as the resource
+    - name: same_org_member
+      parentRoles: ["owner", "admin", "reviewer", "analyst", "viewer"]
+      condition:
+        match:
+          expr: request.resource.attr.org_id == request.principal.attr.org_id
+
+    # Can submit queries and view their own content (analyst, admin, owner in same org)
+    - name: same_org_submitter
+      parentRoles: ["analyst", "admin", "owner"]
+      condition:
+        match:
+          expr: request.resource.attr.org_id == request.principal.attr.org_id
+
+    # Can approve/reject requests and view audit logs (reviewer, admin, owner in same org)
+    - name: same_org_approver
+      parentRoles: ["reviewer", "admin", "owner"]
+      condition:
+        match:
+          expr: request.resource.attr.org_id == request.principal.attr.org_id
+
+    # Full admin access (admin, owner in same org)
+    - name: same_org_admin
+      parentRoles: ["admin", "owner"]
+      condition:
+        match:
+          expr: request.resource.attr.org_id == request.principal.attr.org_id

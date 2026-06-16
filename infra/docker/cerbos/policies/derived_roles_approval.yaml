@@ -1,0 +1,13 @@
+---
+apiVersion: api.cerbos.dev/v1
+derivedRoles:
+  name: approval_roles
+  definitions:
+    # The analyst/admin/owner who originally submitted the query tied to this approval
+    - name: request_submitter
+      parentRoles: ["analyst", "admin", "owner"]
+      condition:
+        match:
+          expr: >
+            request.resource.attr.org_id == request.principal.attr.org_id &&
+            request.resource.attr.submitted_by == request.principal.id

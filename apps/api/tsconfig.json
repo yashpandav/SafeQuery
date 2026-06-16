@@ -1,0 +1,17 @@
+{
+  "extends": "@repo/typescript-config/node-library.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "paths": {
+      "@repo/audit": ["../../packages/audit/src/index.ts"],
+      "@repo/auth": ["../../packages/auth/src/index.ts"],
+      "@repo/db": ["../../packages/db/src/index.ts"],
+      "@repo/db/schema": ["../../packages/db/src/schema/index.ts"],
+      "@repo/db/client": ["../../packages/db/src/client.ts"],
+      "@repo/policy-client": ["../../packages/policy-client/src/index.ts"],
+      "@repo/types": ["../../packages/types/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}
