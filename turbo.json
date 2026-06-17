@@ -1,6 +1,17 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+  "globalEnv": [
+    "NODE_ENV",
+    "PORT",
+    "DATABASE_URL",
+    "PASETO_LOCAL_KEY",
+    "KEYCLOAK_URL",
+    "KEYCLOAK_REALM",
+    "CERBOS_URL",
+    "CORS_ORIGIN",
+    "NEXT_PUBLIC_API_URL"
+  ],
   "tasks": {
     "build": {
       "dependsOn": [
