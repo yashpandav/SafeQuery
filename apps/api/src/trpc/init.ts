@@ -19,12 +19,8 @@ export async function createTRPCContext({ req, res }: { req: Request; res: Respo
       user = await db.query.users.findFirst({ where: eq(users.id, payload.userId) }) ?? null
       sessionId = payload.sessionId
     } catch {
-      // Invalid or expired token — user stays null; authedProcedure will reject
     }
   }
-
-  // Org context is passed per-request via X-Org-Id header.
-  // Validated against the user's memberships inside orgProcedure.
   const orgIdHeader = req.headers['x-org-id']
   const orgId = typeof orgIdHeader === 'string' && orgIdHeader ? orgIdHeader : null
 
@@ -37,19 +33,12 @@ const t = initTRPC.context<Context>().create()
 
 export const createTRPCRouter = t.router
 export const baseProcedure = t.procedure
-
-// ── authedProcedure ───────────────────────────────────────────────────────────
-// Requires a valid PASETO session token. Narrows ctx.user to non-null.
 export const authedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user || !ctx.sessionId) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Authentication required' })
   }
   return next({ ctx: { ...ctx, user: ctx.user, sessionId: ctx.sessionId } })
 })
-
-// ── orgProcedure ──────────────────────────────────────────────────────────────
-// Requires a valid session AND membership in the org specified by X-Org-Id.
-// Adds platformRole to context so Cerbos calls can use it.
 export const orgProcedure = authedProcedure.use(async ({ ctx, next }) => {
   if (!ctx.orgId) {
     throw new TRPCError({

@@ -10,7 +10,19 @@
     "KEYCLOAK_REALM",
     "CERBOS_URL",
     "CORS_ORIGIN",
-    "NEXT_PUBLIC_API_URL"
+    "NEXT_PUBLIC_API_URL",
+    "AI_SERVICE_URL",
+    "SERVICE_PRIVATE_KEY",
+    "SERVICE_PUBLIC_KEY",
+    "OPENAI_API_KEY",
+    "AI_MODEL",
+    "AI_SCREEN_MODEL",
+    "REDIS_URL",
+    "CREDENTIAL_MASTER_KEY",
+    "STATEMENT_TIMEOUT_MS",
+    "LOCK_TIMEOUT_MS",
+    "DEFAULT_ROW_CAP",
+    "WORKER_CONCURRENCY"
   ],
   "tasks": {
     "build": {
@@ -24,7 +36,8 @@
       "outputs": [
         ".next/**",
         "!.next/cache/**",
-        "!.next/dev/**"
+        "!.next/dev/**",
+        "dist/**"
       ]
     },
     "lint": {

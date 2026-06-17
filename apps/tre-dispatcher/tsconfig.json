@@ -1,0 +1,12 @@
+{
+  "extends": "@repo/typescript-config/node-library.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "paths": {
+      "@repo/queue": ["../../packages/queue/src/index.ts"],
+      "@repo/tre-executor": ["../tre-executor/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

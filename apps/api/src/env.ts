@@ -10,6 +10,9 @@ const envSchema = z.object({
   KEYCLOAK_URL: z.string().url('KEYCLOAK_URL must be a valid URL'),
   KEYCLOAK_REALM: z.string().min(1).default('safequery'),
   CERBOS_URL: z.string().url('CERBOS_URL must be a valid URL').default('http://localhost:3592'),
+  AI_SERVICE_URL: z.string().url('AI_SERVICE_URL must be a valid URL').default('http://localhost:3002'),
+  SERVICE_PRIVATE_KEY: z.string().min(1, 'SERVICE_PRIVATE_KEY is required'),
+  REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
   CORS_ORIGIN: z.string().url().default('http://localhost:3000'),
 })
 

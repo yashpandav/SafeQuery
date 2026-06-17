@@ -26,3 +26,51 @@ CREATE ROLE safequery_writer NOLOGIN;
 -- Passwords are overridden in .env and should never use these defaults in production.
 CREATE USER tre_reader WITH PASSWORD 'tre_reader_dev' IN ROLE safequery_reader;
 CREATE USER tre_writer WITH PASSWORD 'tre_writer_dev' IN ROLE safequery_writer;
+
+-- ─── Demo "customer" database ─────────────────────────────────────────────────
+-- Stands in for a customer's own Postgres instance — in production this would
+-- be a completely separate server with credentials supplied via
+-- databaseConnection.create. Same container here purely for local-dev
+-- convenience; the TRE's connection model is identical either way (separate
+-- credentials, separate database, never the safequery control-plane DB).
+CREATE DATABASE customer_demo;
+CREATE USER demo_analyst WITH PASSWORD 'demo_analyst_dev';
+
+\c customer_demo;
+
+GRANT CONNECT ON DATABASE customer_demo TO demo_analyst;
+GRANT USAGE ON SCHEMA public TO demo_analyst;
+
+CREATE TABLE customers (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE orders (
+  id SERIAL PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  total NUMERIC(10, 2) NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO customers (name, email, status) VALUES
+  ('Alice Johnson', 'alice@example.com', 'active'),
+  ('Bob Smith', 'bob@example.com', 'active'),
+  ('Carol Davis', 'carol@example.com', 'inactive'),
+  ('Dave Wilson', 'dave@example.com', 'active'),
+  ('Eve Martinez', 'eve@example.com', 'active');
+
+INSERT INTO orders (customer_id, total, status) VALUES
+  (1, 99.99, 'completed'),
+  (1, 49.50, 'completed'),
+  (2, 150.00, 'pending'),
+  (3, 25.00, 'completed'),
+  (4, 300.00, 'completed'),
+  (5, 75.25, 'pending');
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO demo_analyst;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO demo_analyst;

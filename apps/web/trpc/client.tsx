@@ -19,7 +19,6 @@ function getQueryClient() {
 }
 
 function getApiUrl() {
-  // NEXT_PUBLIC_API_URL must be set in production (e.g. https://api.safequery.example.com)
   return `${process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'}/trpc`
 }
 

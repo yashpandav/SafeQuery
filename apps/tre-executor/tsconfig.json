@@ -1,0 +1,11 @@
+{
+  "extends": "@repo/typescript-config/node-library.json",
+  "compilerOptions": {
+    "paths": {
+      "@repo/queue": ["../../packages/queue/src/index.ts"],
+      "@repo/secrets": ["../../packages/secrets/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules"]
+}

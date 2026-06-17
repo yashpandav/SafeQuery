@@ -9,10 +9,6 @@ import { createTRPCRouter, baseProcedure, authedProcedure } from '../init'
 import { env } from '../../env'
 
 export const authRouter = createTRPCRouter({
-  // ── exchangeToken ──────────────────────────────────────────────────────────
-  // The web app calls this after the user completes Keycloak OIDC login.
-  // Validates the Keycloak access token, upserts the user record, and returns
-  // a PASETO v4.local session token that the client uses for all subsequent calls.
   exchangeToken: baseProcedure
     .input(z.object({ keycloakToken: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
@@ -50,9 +46,6 @@ export const authRouter = createTRPCRouter({
         { userId: user.id, sessionId },
         env.PASETO_LOCAL_KEY,
       )
-
-      // Write USER_LOGIN to every org the user belongs to so each org's audit
-      // chain reflects the login event. New users with no memberships skip this.
       const memberships = await ctx.db.query.organizationMembers.findMany({
         where: eq(organizationMembers.userId, user.id),
         columns: { orgId: true },
@@ -75,20 +68,12 @@ export const authRouter = createTRPCRouter({
         user: { id: user.id, email: user.email, name: user.name },
       }
     }),
-
-  // ── me ────────────────────────────────────────────────────────────────────
-  // Returns the currently authenticated user.
   me: authedProcedure.query(({ ctx }) => ({
     id: ctx.user.id,
     email: ctx.user.email,
     name: ctx.user.name,
   })),
-
-  // ── logout ────────────────────────────────────────────────────────────────
-  // P2: will delete the session from Redis to prevent token reuse.
-  // For now the client simply discards the token.
   logout: authedProcedure.mutation(() => {
-    // TODO(P2): ctx.db exec "DELETE FROM sessions WHERE id = ctx.sessionId" in Redis
     return { success: true }
   }),
 })

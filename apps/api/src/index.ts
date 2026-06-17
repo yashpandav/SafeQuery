@@ -12,8 +12,6 @@ const app = express()
 app.use(helmet())
 app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }))
 app.use(express.json({ limit: '1mb' }))
-
-// tRPC — all procedures are under /trpc
 app.use(
   '/trpc',
   createExpressMiddleware({
@@ -26,8 +24,6 @@ app.use(
     },
   }),
 )
-
-// Plain HTTP health check (used by Docker / load balancer probes)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })

@@ -1,6 +1,7 @@
 import { pgTable, uuid, text, timestamp, primaryKey } from 'drizzle-orm/pg-core'
 import { platformRoleEnum } from './enums'
 import { users } from './users'
+import { customRoles } from './roles'
 
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -20,6 +21,7 @@ export const organizationMembers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     platformRole: platformRoleEnum('platform_role').notNull(),
+    customRoleId: uuid('custom_role_id').references(() => customRoles.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [primaryKey({ columns: [t.orgId, t.userId] })],

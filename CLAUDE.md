@@ -22,17 +22,19 @@ my-turborepo/
 ├── apps/
 │   ├── web/              # Next.js 16 — early stage, tRPC client wired to apps/api
 │   ├── api/              # Express + tRPC — core API server ✅ BUILT
-│   ├── ai-service/       # Vercel AI SDK — SQL generation (NOT YET CREATED)
-│   ├── tre-dispatcher/   # BullMQ job dispatch (NOT YET CREATED)
-│   └── tre-executor/     # DB execution worker (NOT YET CREATED)
+│   ├── ai-service/       # Vercel AI SDK — SQL generation ✅ BUILT
+│   ├── tre-dispatcher/   # BullMQ worker process — routes jobs to tre-executor ✅ BUILT
+│   └── tre-executor/     # The only component that touches customer DBs ✅ BUILT
 ├── packages/
 │   ├── ui/               # Shared React components ✅ EXISTS
 │   ├── types/            # Shared Zod schemas + TypeScript types ✅ BUILT
-│   ├── auth/             # Keycloak OIDC + PASETO v3.local helpers ✅ BUILT
+│   ├── auth/             # Keycloak OIDC + PASETO v3.local + v4.public helpers ✅ BUILT
 │   ├── db/               # Drizzle ORM schema + RLS + migrations ✅ BUILT
 │   ├── sql-validator/    # AST parsing, Cerbos decisions, row-filter injection ✅ BUILT
 │   ├── policy-client/    # Cerbos HTTP client wrapper ✅ BUILT
 │   ├── audit/            # Hash-chain audit writer + verify-integrity ✅ BUILT
+│   ├── secrets/          # AES-256-GCM envelope encryption for DB credentials ✅ BUILT
+│   ├── queue/            # Shared BullMQ job contracts (api ↔ dispatcher ↔ executor) ✅ BUILT
 │   ├── rate-limit/       # rate-limiter-flexible wrappers (NOT YET CREATED)
 │   ├── eslint-config/    # Shared ESLint configs ✅ EXISTS
 │   └── typescript-config/ # Shared TS configs ✅ EXISTS
@@ -57,13 +59,13 @@ my-turborepo/
 | Backend API | Express, TypeScript 5.9, tRPC 11, Zod 4 |
 | Database (app) | PostgreSQL 16 + Drizzle ORM 0.44, Row-Level Security on `org_id` |
 | Identity | Keycloak 24 (OIDC, off-the-shelf container) |
-| Sessions/Tokens | PASETO **v3.local** (AES-256-CTR + HMAC-SHA384 via Node.js native crypto) |
+| Sessions/Tokens | PASETO **v3.local** (sessions, AES-256-CTR+HMAC-SHA384) + **v4.public** (service-to-service, Ed25519) |
 | Authorization | Cerbos 0.28 (HTTP, attribute-based policy decision point) |
-| AI | Vercel AI SDK, structured outputs via Zod, provider pattern |
+| AI | Vercel AI SDK 6 (`generateText` + `Output.object`, not the deprecated `generateObject`), OpenAI provider, structured outputs via Zod |
 | SQL Processing | node-sql-parser (AST), Cerbos decisions, row-filter injection |
-| Job Queue | BullMQ + Redis 7 |
-| DB Execution | pg + pg-cursor (row caps), worker_threads (P1), Docker (P2), k8s (P3+) |
-| Secret Mgmt | AES-256-GCM envelope (P1) → HashiCorp Vault dynamic secrets (P3) |
+| Job Queue | BullMQ 5 + Redis 7 (apps/api producer → apps/tre-dispatcher consumer) |
+| DB Execution | pg 8 + pg-cursor (row caps); single-process worker pool (P1) → containers/k8s (P3+) |
+| Secret Mgmt | AES-256-GCM two-layer envelope encryption (P1, `packages/secrets`) → HashiCorp Vault dynamic secrets (P3) |
 | Audit | SHA-256 hash chain (append-only, verify-integrity endpoint) |
 | Rate Limiting | rate-limiter-flexible (per-user/org), Cloudflare edge (P4) |
 | Observability | Pino, OpenTelemetry, Prometheus/Grafana, Loki, Sentry |
@@ -134,10 +136,18 @@ Custom roles (defined per org in DB) specify: allowed tables, allowed columns, a
 
 - All tenant-scoped tables have `org_id` with PostgreSQL RLS (`current_setting('app.current_org_id')::uuid`)
 - `users` intentionally has NO RLS — resolved before org context is set
-- `organization_members` has a composite primary key `(org_id, user_id)`
+- `organization_members` has a composite primary key `(org_id, user_id)` plus a nullable `custom_role_id`
+  FK to `custom_roles` (`ON DELETE SET NULL`) — null means that member has no query.submit capability
+  for this org (e.g. an Owner/Admin who only manages the platform)
 - `audit_logs` has `prev_hash` + `hash` columns forming a SHA-256 hash chain
+- `database_connections.encrypted_credentials` holds a `packages/secrets` envelope (JSON: ciphertext +
+  IV + auth tag, twice — once for the credentials, once for the per-row data key wrapped by the master
+  key). `apps/api` never decrypts it; only `apps/tre-executor` holds `CREDENTIAL_MASTER_KEY`.
 
 RLS policies live in `packages/db/src/rls-policies.sql` (run after `drizzle-kit migrate`).
+**No live database has been migrated yet in this environment** (Docker wasn't running when the schema
+last changed) — `packages/db/drizzle/0000_*.sql` is generated and ready but unapplied. Run
+`pnpm --filter @repo/db db:migrate` once Postgres is up, then apply `rls-policies.sql`.
 
 ---
 
@@ -153,9 +163,15 @@ Key exports: `createDbClient()`, `withOrgContext()`, `DbClient`, all table defin
 Run `pnpm --filter @repo/db db:generate` then `db:migrate` after schema changes.
 
 ### `packages/auth`
-PASETO v3.local session tokens + Keycloak OIDC JWT verification.
-Key exports: `signSession()`, `verifySession()`, `verifyKeycloakToken()`, `extractBearerToken()`.
-**Note:** v3.local (not v4) — `paseto` npm package does not implement XChaCha20 (v4.local).
+PASETO v3.local session tokens + PASETO v4.public service tokens + Keycloak OIDC JWT verification.
+Key exports: `signSession()`, `verifySession()`, `verifyKeycloakToken()`, `extractBearerToken()`,
+`generateServiceKeypairBase64()`, `signServiceToken()`, `verifyServiceToken()`.
+**Note on v3 vs v4.local:** sessions use v3.local (not v4.local) — the `paseto` npm package does not
+implement XChaCha20 (v4.local). It DOES implement v4.public (Ed25519 sign/verify), which is what
+service-to-service calls (`api` → `ai-service`) use — signed with a private key, verified with a
+public key, no shared secret. Keypairs are Ed25519, base64-encoded SPKI/PKCS8 PEM, generated via
+`generateServiceKeypairBase64()`. 5 unit tests (`pnpm --filter @repo/auth test`) cover sign/verify
+round-trip, wrong-keypair rejection, expiry, and tampering.
 
 ### `packages/policy-client`
 Cerbos HTTP client wrapper with typed check functions per resource.
@@ -179,6 +195,25 @@ invalid row filter) is always SECURITY_INCIDENT — there is no approval path fo
 65 adversarial unit tests (`pnpm --filter @repo/sql-validator test`, vitest) cover injection corpora,
 statement smuggling via row-filter strings, cross-tenant access, and privilege escalation attempts.
 
+### `packages/secrets`
+Two-layer AES-256-GCM envelope encryption (PROOF_OF_CONCEPT.md §7): a random per-secret data key (DEK)
+encrypts the plaintext, and the DEK itself is encrypted by a master key (KEK) — rotating the master key
+never requires re-encrypting every stored credential. `encryptCredentials`/`decryptCredentials` work on
+plain strings and return/accept one JSON-serialized blob (matches `database_connections.encrypted_credentials`'s
+`text` column exactly); `encryptDatabaseCredentials`/`decryptDatabaseCredentials` wrap that for the
+`{ username, password }` shape specifically. `generateMasterKeyHex()` provisions `CREDENTIAL_MASTER_KEY`.
+11 unit tests (`pnpm --filter @repo/secrets test`) cover round-trip, wrong-key rejection, GCM auth-tag
+tamper detection (both the outer ciphertext and the wrapped DEK), and that plaintext never appears in
+the serialized output.
+
+### `packages/queue`
+Shared BullMQ job contracts between `apps/api` (producer), `apps/tre-dispatcher` (consumer/router), and
+`apps/tre-executor` (the actual handler `apps/tre-dispatcher` imports and calls). Defines 4 job types —
+`test_connection`, `capture_schema`, `execute_read`, `execute_write` — each with its own typed
+data/result shape, plus a `JobResultMap` that lets a generic caller (`ExecutionQueueClient.run<T>`) get
+back the specific result type for the job it sent, not the full union. `createRedisConnection()` sets
+`maxRetriesPerRequest: null`, which BullMQ requires.
+
 ### `apps/api`
 Express server with tRPC router. Three-tier procedure hierarchy:
 - `baseProcedure` — public
@@ -186,7 +221,123 @@ Express server with tRPC router. Three-tier procedure hierarchy:
 - `orgProcedure` — requires valid token + membership in org from `X-Org-Id` header
 
 Context includes `db` (DrizzleClient) and `cerbos` (CerbosClient) singletons.
-Env vars: `DATABASE_URL`, `PASETO_LOCAL_KEY` (64 hex chars), `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `CERBOS_URL`, `CORS_ORIGIN`.
+Env vars: `DATABASE_URL`, `PASETO_LOCAL_KEY` (64 hex chars), `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `CERBOS_URL`,
+`AI_SERVICE_URL`, `SERVICE_PRIVATE_KEY` (base64 PKCS8 PEM Ed25519, pairs with ai-service's
+`SERVICE_PUBLIC_KEY`), `REDIS_URL`, `CORS_ORIGIN`.
+
+**`apps/api` never opens a connection to a customer database — not even to test one or discover its
+schema.** Every one of the three routers below that needs to touch a customer DB enqueues a job via
+`src/lib/execution-queue.ts` (`queue.add()` + `job.waitUntilFinished(queueEvents)`, 60s timeout) and
+only ever sees the result `apps/tre-executor` hands back.
+
+**`query.submit`** (`src/trpc/routers/query.ts`) — full pipeline in `src/lib/query-pipeline.ts`'s
+`submitQuery()`: resolve the caller's `organizationMembers.customRoleId` → `customRoles.config`
+(FORBIDDEN if none assigned) → resolve `databaseConnections` + `environments.type` for the given
+`connectionId` (NOT_FOUND if it doesn't belong to the caller's org) → resolve the latest
+`schemaSnapshots` row (PRECONDITION_FAILED if none captured yet) → filter the snapshot down to the
+role's `allowedTables`/`allowedColumns` (SQ-026 schema filtering happens *here*, not in ai-service) →
+call `ai-service.ai.generate` (signs a fresh 5-minute PASETO v4.public token per call) → if ai-service
+already returned `SECURITY_INCIDENT`, skip sql-validator entirely (no SQL exists) → otherwise run
+`sql-validator.validateSql` → persist a `query_logs` row → branch on `riskLevel`:
+  - **SAFE/WARNING** → enqueue an `execute_read` job immediately, update `query_logs` to `EXECUTED`/`FAILED`
+    with the real `rowCount`/`executionMs`, return the masked rows to the caller in the same response.
+  - **CRITICAL** → enqueue an `execute_write` job with `dryRun: true` (the exact affected rows via
+    `RETURNING * ... ROLLBACK`, nothing committed), store that as the `approval_requests.simulationResult`
+    a reviewer will see, create the `approval_requests` row.
+  - **SECURITY_INCIDENT** → persist straight to `FAILED`, nothing enqueued, no approval path.
+Audit entries: `QUERY_SUBMITTED` always; `QUERY_EXECUTED`/`QUERY_FAILED` after a read runs;
+`APPROVAL_REQUESTED` for CRITICAL; `SECURITY_INCIDENT_DETECTED` on rejection.
+
+**`databaseConnection.create`/`.list`/`.captureSchema`** (`src/trpc/routers/database-connection.ts`,
+`src/lib/connection-pipeline.ts`) — SQ-019/020/021/022. `create` enqueues a `test_connection` job (which
+also encrypts on success — `apps/tre-executor` is the only place a brand-new connection's credentials
+ever get encrypted, since `CREDENTIAL_MASTER_KEY` only lives there); only persists the connection row if
+that job succeeds, and only ever stores the encrypted envelope it gets back, never the plaintext
+password. `captureSchema` enqueues a `capture_schema` job and stores the resulting column metadata
+(with a regex PII heuristic — `apps/tre-executor`'s `buildSnapshot()`) as a new `schema_snapshots` row.
+Both Cerbos-gated via `checkDatabaseConnection` (`create`/`read` require `same_org_admin`).
+
+**`approval.decide`** (`src/trpc/routers/approval.ts`, `src/lib/approval-pipeline.ts`) — a Reviewer/Admin/Owner
+approves or rejects a `PENDING` `CRITICAL` approval request. Four-eyes (a submitter can't approve their
+own request) is enforced by Cerbos's DENY rule in `approval_request.yaml`, not re-implemented in app
+code. On **REJECTED**: `approval_requests.status = 'REJECTED'`, `query_logs.status = 'CANCELLED'`, nothing
+enqueued. On **APPROVED**: enqueues the *same validated SQL* as an `execute_write` job with
+`dryRun: false` — no data is copied or merged from the earlier dry-run, this fresh run's `COMMIT` is the
+change reaching production (PROOF_OF_CONCEPT.md §12) — then updates `query_logs` to `EXECUTED`/`FAILED`.
+
+**Not yet built:** SQ-038's read-side `EXPLAIN` simulation (writes get a real dry-run; reads execute
+directly since SAFE/WARNING never need reviewer sign-off) and SQ-037's WARNING acknowledgment UI step
+(currently treated identically to SAFE — executes immediately, no ack).
+
+21 unit tests (`pnpm --filter @repo/api test`, vitest) across 3 files cover all of the above — risk-level
+branching, the guard clauses (FORBIDDEN/NOT_FOUND/PRECONDITION_FAILED/CONFLICT), schema filtering,
+four-eyes rejection, and that plaintext credentials never appear in anything persisted — using
+lightweight in-memory mocks for `db`/Cerbos/ai-service/the execution queue, never a real Postgres,
+Redis, or network call.
+
+### `apps/tre-executor`
+**The only component in this entire codebase allowed to touch a customer database**, and the only one
+holding `CREDENTIAL_MASTER_KEY`. Not a standalone running service — a library of handler functions
+(`src/lib/*.ts`) that `apps/tre-dispatcher` imports and calls directly; this is the Phase-1 simplification
+of "BullMQ + worker_threads" (PROOF_OF_CONCEPT.md §27) — true process/container isolation per write is a
+documented Phase-3 upgrade (container TRE), not silently claimed now.
+
+Four handlers, one per `packages/queue` job type, each taking an injectable `ClientFactory`/`CursorFactory`
+so they're fully unit-testable against a fake `pg.Client` (`src/__tests__/fake-client.ts`) — no real
+Postgres needed:
+- **`handleTestConnection`** — connects with the raw plaintext credentials from the job payload, runs
+  `SELECT 1`, encrypts on success via `packages/secrets` (the only place this happens), never persists.
+- **`handleCaptureSchema`** — queries `information_schema.columns`, groups into the `ColumnDefinition[]`
+  shape, flags likely-PII columns by name (`buildSnapshot()`'s regex heuristic — a hint for the AI
+  prompt, not the security boundary; Cerbos's `maskedColumns` output is what's actually enforced).
+- **`handleExecuteRead`** — `BEGIN TRANSACTION READ ONLY`, `pg-cursor` fetches `rowCap + 1` rows (one
+  extra to detect truncation without a separate `COUNT(*)`), `ROLLBACK` (nothing was ever going to
+  commit), masks the Cerbos-returned `maskedColumns` (`maskRow()`) before returning.
+- **`handleExecuteWrite`** — `BEGIN`, sets `statement_timeout`/`lock_timeout`, appends `RETURNING *` to
+  the already-validated single-statement SQL, then `ROLLBACK` (`dryRun: true`, the simulation) or
+  `COMMIT` (`dryRun: false`, only after approval).
+
+Env vars: `CREDENTIAL_MASTER_KEY` (64 hex chars — **never set this anywhere else**), `STATEMENT_TIMEOUT_MS`,
+`LOCK_TIMEOUT_MS`, `DEFAULT_ROW_CAP`. 22 unit tests (`pnpm --filter @repo/tre-executor test`, vitest).
+
+### `apps/tre-dispatcher`
+The actual running process — a BullMQ `Worker` consuming `packages/queue`'s shared execution queue,
+calling `apps/tre-executor`'s `handleJob()` per job. Deliberately thin: routing is the entire job.
+Env vars: `REDIS_URL`, `WORKER_CONCURRENCY` (default 5 — reads and writes currently share one pool;
+tiered isolation between them is a Phase-3 concern per the same container-TRE upgrade path above).
+
+### `apps/ai-service`
+Standalone Express + tRPC service — text-to-SQL generation, isolated from `apps/api` per the architecture
+(`api → ai-service` is `tRPC` over `PASETO v4.public`, not in-process). Has no DB access; `apps/api` is
+responsible for resolving the user's custom role and schema snapshot and passing in an already-filtered
+schema — `ai-service` never sees tables/columns the caller didn't explicitly include.
+
+Pipeline (`generateSql()` in `src/lib/generate-sql.ts`), matching PROOF_OF_CONCEPT.md §5.1 exactly:
+`sanitize` (strip control/invisible chars, NFKC-normalize) → `screen` (regex heuristics, then a cheap
+model second-opinion via `Output.choice` — either positive blocks generation entirely, no API call to
+the main model) → `generateText` with `output: Output.object(GeneratedSqlSchema)` → return.
+A screen-blocked or empty-after-sanitization prompt returns a `GeneratedSql`-shaped result with
+`riskLevel: 'SECURITY_INCIDENT'` and empty `sql` — the caller should skip `sql-validator` entirely in
+that case (there's no SQL to validate) and go straight to audit + reject.
+
+**Provider:** OpenAI directly via `@ai-sdk/openai` (`createOpenAI({ apiKey })`), not the Vercel AI
+Gateway — chosen because the user has an OpenAI API key, not a Vercel account. Default models
+(verified live against the AI Gateway's model-list endpoint, not assumed): `AI_MODEL=gpt-5.5`
+(generation), `AI_SCREEN_MODEL=gpt-5.4-nano` (injection screening). Both configurable via env var —
+swapping providers means only touching `src/lib/model.ts`.
+
+**Critical AI SDK 6 note:** `generateObject`/`streamObject` are deprecated (removed in a future version).
+This codebase uses the current pattern: `generateText({ model, output: Output.object({ schema }) })`,
+reading `result.output` — not `result.object`. See `.agents/skills/ai-sdk/SKILL.md`; before touching
+this code, re-verify against `node_modules/ai/docs/` rather than trusting memory — the SDK's own skill
+file says training-data knowledge of it is unreliable.
+
+Auth: every procedure except `health.check` requires `serviceProcedure` (PASETO v4.public, verified
+against `SERVICE_PUBLIC_KEY`) — there is no public/anonymous surface.
+Env vars: `OPENAI_API_KEY`, `AI_MODEL`, `AI_SCREEN_MODEL`, `SERVICE_PUBLIC_KEY` (base64 SPKI PEM), `CORS_ORIGIN`.
+38 unit tests (`pnpm --filter @repo/ai-service test`, vitest) cover sanitization, the heuristic injection
+corpus, schema-prompt rendering, and the full pipeline using `ai/test`'s `MockLanguageModelV3` — no real
+OpenAI calls in CI.
 
 ---
 
@@ -242,30 +393,56 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 | Phase | Focus | Status |
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
-| P1 | **The Differentiator** | 🔲 Next — AI service, sql-validator, risk engine, TRE executor, query pipeline |
-| P2 | Governance | 🔲 Multi-tenancy UI, custom-roles, approval workflow, multiple DB connections |
-| P3 | Real Isolation | 🔲 Container TRE, Vault secrets, dispatcher/executor apps |
+| P1 | **The Differentiator** | ✅ **Core loop COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify. Remaining: SQ-037 WARNING ack UI, SQ-038 read-side EXPLAIN simulation, no live DB migrated yet in this dev environment |
+| P2 | Governance | 🔲 Multi-tenancy UI, custom-roles CRUD UI, multiple DB connections UI, environments CRUD |
+| P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
 
-**P1 starting point:** `packages/sql-validator` (AST + Cerbos validation) and `apps/ai-service` (Vercel AI SDK, structured SQL generation). See `Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042.
+**What "core loop complete" means concretely:** `query.submit` now actually executes — a SAFE/WARNING
+query returns real (masked) rows in the same response; a CRITICAL query gets a real dry-run simulation
+and creates an approval request; `approval.decide` re-runs and commits the exact validated SQL on
+approval. `databaseConnection.create`/`.captureSchema` give the pipeline real connections and real
+schema snapshots to work with, instead of requiring hand-seeded fixtures. None of this required
+`apps/api` to ever open a `pg` connection — every customer-DB touch goes through
+`packages/queue` → `apps/tre-dispatcher` → `apps/tre-executor`, which is the one place
+`CREDENTIAL_MASTER_KEY` exists.
+
+**What's still simplified vs. the canonical spec, by design, for P1:** `apps/tre-executor` is a plain
+TypeScript module `apps/tre-dispatcher` calls in-process — not yet its own `worker_threads`/container
+boundary (Phase 3). Reads execute directly with no separate `EXPLAIN`-based simulation step (only writes
+get a dry-run, since only CRITICAL needs reviewer sign-off). WARNING is currently treated identically to
+SAFE (auto-executes, no acknowledgment prompt — SQ-037, needs a UI that doesn't exist yet). See
+`Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042 (everything done except SQ-037/SQ-038).
 
 ---
 
 ## Development Commands
 
 ```bash
-# Start all services
+# Start infra (Postgres, Redis, Keycloak, Cerbos)
 docker compose -f infra/docker/docker-compose.yml up -d
 
 # Install deps
 pnpm install
 
-# Dev mode (all apps)
+# Generate the two keys every fresh checkout needs before anything will boot:
+#   PASETO_LOCAL_KEY      -> node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+#   SERVICE_PRIVATE_KEY/SERVICE_PUBLIC_KEY (one keypair, split across apps/api + apps/ai-service):
+#     pnpm --filter @repo/api exec tsx -e "const {generateServiceKeypairBase64}=require('@repo/auth'); console.log(generateServiceKeypairBase64())"
+#   CREDENTIAL_MASTER_KEY (apps/tre-executor ONLY):
+#     pnpm --filter @repo/tre-executor exec tsx -e "console.log(require('@repo/secrets').generateMasterKeyHex())"
+# Copy each app's .env.example -> .env and fill these in.
+
+# Dev mode (all apps, including apps/tre-dispatcher which must be running
+# for query.submit/approval.decide/databaseConnection.* to do anything —
+# they enqueue jobs and wait for it)
 pnpm dev
 
-# Type-check all packages
+# Type-check / lint / test all packages
 pnpm check-types
+pnpm lint
+pnpm test
 
 # Database migrations (run after schema changes)
 pnpm --filter @repo/db db:generate    # generate migration files
@@ -283,12 +460,17 @@ Node >= 18 required. pnpm 9 required.
 
 - **PostgreSQL-only in v1** — covers Supabase, Neon, RDS, self-hosted
 - **Keycloak not hand-rolled auth** — integrates with existing enterprise IdPs
-- **PASETO v3.local not JWT** — eliminates algorithm-confusion attacks; v3 (not v4) because `paseto` npm does not implement v4.local (XChaCha20 is not in Node.js native crypto)
+- **PASETO not JWT** — eliminates algorithm-confusion attacks. Sessions use v3.local (not v4.local — `paseto` npm doesn't implement XChaCha20). Service-to-service (`api`→`ai-service`) uses v4.public (Ed25519) — `paseto` npm does implement this one
+- **OpenAI directly, not Vercel AI Gateway** — user has an OpenAI API key, not a Vercel account; provider pattern in `apps/ai-service/src/lib/model.ts` keeps this swappable later
+- **`generateText` + `Output.object`, not `generateObject`** — AI SDK 6 deprecated `generateObject`/`streamObject`; this codebase follows current guidance, not the soon-to-be-removed API
 - **Cerbos not hand-rolled RBAC** — externalized, auditable, attribute-based; derived roles in separate files per Cerbos spec
 - **Custom roles as DB rows** — org admins configure without redeploy
 - **Drizzle ORM** — SQL migrations as code, typed, RLS defined in schema
 - **tRPC for internal APIs** — end-to-end type safety
-- **No direct API→customer DB** — all execution through queue-based TRE
+- **No direct API→customer DB** — all execution through queue-based TRE; enforced by construction (`apps/api` has no `pg` dependency at all, only `@repo/queue`)
+- **Two-layer envelope encryption, not direct master-key encryption** — a random per-secret DEK encrypts the credentials, the DEK is encrypted by the KEK (`CREDENTIAL_MASTER_KEY`); rotating the master key never requires re-encrypting every connection
+- **`CREDENTIAL_MASTER_KEY` lives only on `apps/tre-executor`** — including for *encrypting* a brand-new connection's credentials, not just decrypting; `apps/api` enqueues a `test_connection` job and only ever receives the already-encrypted envelope back, so it never has the means to decrypt anything even if compromised
+- **`apps/tre-executor` is an in-process module, not yet its own container** — Phase 1 deliberately simplifies "BullMQ + worker_threads" to "BullMQ dispatcher importing a handler library"; true per-write process isolation is the documented Phase 3 upgrade, not silently skipped
 - **Hash-chain audit** — tamper-evident without blockchain operational overhead
 - **Source package pattern** — packages export `.ts` directly, `moduleResolution: Bundler`, no build step
 

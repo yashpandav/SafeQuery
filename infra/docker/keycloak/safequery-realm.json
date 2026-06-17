@@ -27,7 +27,7 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
       "redirectUris": [
@@ -142,6 +142,31 @@
 
   "defaultDefaultClientScopes": ["openid", "profile", "email"],
   "defaultOptionalClientScopes": [],
+
+  "users": [
+    {
+      "username": "analyst@safequery.dev",
+      "email": "analyst@safequery.dev",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dev",
+      "lastName": "Analyst",
+      "credentials": [
+        { "type": "password", "value": "analyst-dev-password", "temporary": false }
+      ]
+    },
+    {
+      "username": "reviewer@safequery.dev",
+      "email": "reviewer@safequery.dev",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Dev",
+      "lastName": "Reviewer",
+      "credentials": [
+        { "type": "password", "value": "reviewer-dev-password", "temporary": false }
+      ]
+    }
+  ],
 
   "eventsEnabled": true,
   "eventsListeners": ["jboss-logging"],

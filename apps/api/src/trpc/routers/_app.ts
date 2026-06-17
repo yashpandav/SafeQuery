@@ -1,11 +1,15 @@
 import { createTRPCRouter } from '../init'
 import { authRouter } from './auth'
 import { healthRouter } from './health'
+import { queryRouter } from './query'
+import { databaseConnectionRouter } from './database-connection'
+import { approvalRouter } from './approval'
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
   health: healthRouter,
+  query: queryRouter,
+  databaseConnection: databaseConnectionRouter,
+  approval: approvalRouter,
 })
-
-// Re-exported for apps/web to import the type — no runtime code crosses the boundary
 export type AppRouter = typeof appRouter
