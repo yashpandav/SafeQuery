@@ -64,7 +64,8 @@ describe('detectComments', () => {
   })
 
   it('flags block comments', () => {
-    expect(detectComments('SELECT * FROM t  WHERE id = 1')).toBe(true)
+    const blockComment = ['/', '*', ' sneaky ', '*', '/'].join('')
+    expect(detectComments(`SELECT * FROM t ${blockComment} WHERE id = 1`)).toBe(true)
   })
 
   it('does not flag a clean query', () => {

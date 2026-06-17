@@ -12,6 +12,7 @@ export async function createTRPCContext({ req, res }: { req: Request; res: Respo
       const payload = await verifyServiceToken(token, env.SERVICE_PUBLIC_KEY)
       callerService = payload.service
     } catch {
+      // Invalid/expired/forged service token — callerService stays null; serviceProcedure rejects
     }
   }
 

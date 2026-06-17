@@ -124,6 +124,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@cerbos/core':
+        specifier: ^0.31.0
+        version: 0.31.0(@bufbuild/protobuf@2.12.0)
       '@repo/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
@@ -412,6 +415,9 @@ importers:
 
   packages/policy-client:
     dependencies:
+      '@cerbos/core':
+        specifier: ^0.31.0
+        version: 0.31.0(@bufbuild/protobuf@2.12.0)
       '@cerbos/http':
         specifier: ^0.28.1
         version: 0.28.1(@bufbuild/protobuf@2.12.0)(@cerbos/api@0.8.0)
@@ -487,6 +493,9 @@ importers:
         specifier: ^5.4.0
         version: 5.4.0
     devDependencies:
+      '@cerbos/core':
+        specifier: ^0.31.0
+        version: 0.31.0(@bufbuild/protobuf@2.12.0)
       '@repo/eslint-config':
         specifier: workspace:*
         version: link:../eslint-config

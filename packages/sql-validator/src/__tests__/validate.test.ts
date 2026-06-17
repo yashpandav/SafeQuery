@@ -87,11 +87,12 @@ describe('validateSql — golden paths', () => {
 })
 
 describe('validateSql — adversarial corpus (must always reject as SECURITY_INCIDENT)', () => {
+  const blockComment = ['/', '*', ' sneaky ', '*', '/'].join('')
   const cases: Array<{ name: string; sql: string }> = [
     { name: 'stacked statement injection', sql: 'SELECT * FROM customers; DROP TABLE customers' },
     { name: 'stacked statement with two benign selects', sql: 'SELECT * FROM customers; SELECT * FROM orders' },
     { name: 'comment-based injection attempt', sql: "SELECT * FROM customers -- ; DROP TABLE customers" },
-    { name: 'block comment smuggling', sql: 'SELECT * FROM customers  WHERE id = 1' },
+    { name: 'block comment smuggling', sql: `SELECT * FROM customers ${blockComment} WHERE id = 1` },
     { name: 'DROP TABLE', sql: 'DROP TABLE customers' },
     { name: 'TRUNCATE', sql: 'TRUNCATE TABLE customers' },
     { name: 'ALTER TABLE', sql: 'ALTER TABLE customers ADD COLUMN backdoor text' },

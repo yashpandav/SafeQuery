@@ -21,7 +21,7 @@ function buildPrincipal(p: CerbosPrincipal) {
   return {
     id: p.userId,
     roles: [p.platformRole],
-    attributes: { org_id: p.orgId },
+    attr: { org_id: p.orgId },
   }
 }
 
@@ -37,7 +37,7 @@ async function check<T extends string>(
     principal: buildPrincipal(principal),
     resources: [
       {
-        resource: { kind: resourceKind, id: resourceId, attributes: resourceAttrs },
+        resource: { kind: resourceKind, id: resourceId, attr: resourceAttrs },
         actions: actions as string[],
       },
     ],
@@ -113,7 +113,7 @@ export async function checkDbTable(
     principal: {
       id: principal.userId,
       roles: [principal.platformRole],
-      attributes: {
+      attr: {
         org_id: principal.orgId,
         table_scope: dbAttrs.tableScope,
         capabilities: dbAttrs.capabilities,
@@ -123,7 +123,7 @@ export async function checkDbTable(
     },
     resources: [
       {
-        resource: { kind: 'db_table', id: resource.table, attributes: { org_id: resource.orgId } },
+        resource: { kind: 'db_table', id: resource.table, attr: { org_id: resource.orgId } },
         actions,
       },
     ],

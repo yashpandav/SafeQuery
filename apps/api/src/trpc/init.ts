@@ -19,8 +19,12 @@ export async function createTRPCContext({ req, res }: { req: Request; res: Respo
       user = await db.query.users.findFirst({ where: eq(users.id, payload.userId) }) ?? null
       sessionId = payload.sessionId
     } catch {
+      // Invalid or expired token — user stays null; authedProcedure will reject
     }
   }
+
+  // Org context is passed per-request via X-Org-Id header.
+  // Validated against the user's memberships inside orgProcedure.
   const orgIdHeader = req.headers['x-org-id']
   const orgId = typeof orgIdHeader === 'string' && orgIdHeader ? orgIdHeader : null
 

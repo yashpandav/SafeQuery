@@ -11,6 +11,7 @@
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
+    "@cerbos/core": "^0.31.0",
     "@cerbos/http": "^0.28.1",
     "@repo/types": "workspace:*",
     "zod": "^4.4.3"

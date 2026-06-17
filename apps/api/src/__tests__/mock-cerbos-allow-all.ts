@@ -1,33 +1,34 @@
-import type { CerbosClient } from '@repo/policy-client'
+import type { CheckResourcesRequest } from '@cerbos/core'
+import type { CerbosClient, CerbosCheckResourceResult } from '@repo/policy-client'
+
+// For tests that exercise apps/api's own authorization gating (e.g.
+// "rejects when X"), not Cerbos's db_table policy logic (already covered by
+// packages/sql-validator's 65 tests). Allows any action as long as the
+// resource and principal org_id attributes match.
 export function createAllowAllCerbosClient(orgId: string): CerbosClient {
   return {
-    async checkResources(req: {
-      principal: { attributes: Record<string, unknown> }
-      resources: { resource: { kind: string; id: string; attributes: Record<string, unknown> }; actions: string[] }[]
-    }) {
-      const principalOrgId = req.principal.attributes['org_id']
+    async checkResources(req: CheckResourcesRequest) {
+      const principalOrgId = req.principal.attr?.['org_id']
       const results = req.resources.map(({ resource, actions }) => {
-        const allowed = resource.attributes['org_id'] === principalOrgId && principalOrgId === orgId
-        const actionsMap: Record<string, 'EFFECT_ALLOW' | 'EFFECT_DENY'> = {}
-        for (const action of actions) actionsMap[action] = allowed ? 'EFFECT_ALLOW' : 'EFFECT_DENY'
+        const allowed = resource.attr?.['org_id'] === principalOrgId && principalOrgId === orgId
+        const actionsMap: Record<string, boolean> = {}
+        for (const action of actions) actionsMap[action] = allowed
         return {
-          resource: { kind: resource.kind, id: resource.id },
-          actions: actionsMap,
-          outputs: [],
+          resourceId: resource.id,
           isAllowed(action: string) {
-            return actionsMap[action] === 'EFFECT_ALLOW'
+            return actionsMap[action] ?? false
           },
         }
       })
       return {
-        results,
         isAllowed({ resource, action }: { resource: { kind: string; id: string }; action: string }) {
-          return results.find((r) => r.resource.id === resource.id)?.isAllowed(action)
+          return results.find((r) => r.resourceId === resource.id)?.isAllowed(action)
         },
-        findResult(resource: { kind: string; id: string }) {
-          return results.find((r) => r.resource.id === resource.id)
+        findResult(resource: { kind: string; id: string }): CerbosCheckResourceResult | undefined {
+          const match = results.find((r) => r.resourceId === resource.id)
+          return match ? { outputs: [] } : undefined
         },
       }
     },
-  } as any as CerbosClient
+  }
 }

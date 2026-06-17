@@ -5,7 +5,8 @@ import { decideApproval, type ApprovalPrincipal } from '../lib/approval-pipeline
 import { createMockDb, type MockDbFixtures } from './mock-db'
 import { createMockExecutionQueue } from './mock-execution-queue'
 import { createAllowAllCerbosClient } from './mock-cerbos-allow-all'
-import type { CerbosClient } from '@repo/policy-client'
+import type { CheckResourcesRequest } from '@cerbos/core'
+import type { CerbosClient, CerbosCheckResourceResult } from '@repo/policy-client'
 
 const ORG_ID = 'org-1'
 const SUBMITTER_ID = 'analyst-1'
@@ -24,38 +25,35 @@ function baseFixtures(): MockDbFixtures {
     databaseConnections: { id: CONNECTION_ID, orgId: ORG_ID, host: 'localhost', port: 5432, database: 'demo', ssl: false, encryptedCredentials: 'envelope' },
   }
 }
+// Denies approve/reject specifically when submitted_by === principal.id —
+// mirrors approval_request.yaml's four-eyes DENY rule, which is the one
+// piece of real Cerbos logic this pipeline depends on beyond org matching.
 function createFourEyesCerbosClient(orgId: string): CerbosClient {
   return {
-    async checkResources(req: {
-      principal: { id: string; attributes: Record<string, unknown> }
-      resources: { resource: { kind: string; id: string; attributes: Record<string, unknown> }; actions: string[] }[]
-    }) {
+    async checkResources(req: CheckResourcesRequest) {
       const results = req.resources.map(({ resource, actions }) => {
-        const orgMatches = resource.attributes['org_id'] === req.principal.attributes['org_id'] && req.principal.attributes['org_id'] === orgId
-        const isOwnRequest = resource.attributes['submitted_by'] === req.principal.id
-        const actionsMap: Record<string, 'EFFECT_ALLOW' | 'EFFECT_DENY'> = {}
-        for (const action of actions) actionsMap[action] = orgMatches && !isOwnRequest ? 'EFFECT_ALLOW' : 'EFFECT_DENY'
+        const orgMatches = resource.attr?.['org_id'] === req.principal.attr?.['org_id'] && req.principal.attr?.['org_id'] === orgId
+        const isOwnRequest = resource.attr?.['submitted_by'] === req.principal.id
+        const actionsMap: Record<string, boolean> = {}
+        for (const action of actions) actionsMap[action] = orgMatches && !isOwnRequest
         return {
-          resource: { kind: resource.kind, id: resource.id },
-          actions: actionsMap,
-          outputs: [],
+          resourceId: resource.id,
           isAllowed(action: string) {
-            return actionsMap[action] === 'EFFECT_ALLOW'
+            return actionsMap[action] ?? false
           },
         }
       })
       return {
-        results,
         isAllowed({ resource, action }: { resource: { kind: string; id: string }; action: string }) {
-          return results.find((r) => r.resource.id === resource.id)?.isAllowed(action)
+          return results.find((r) => r.resourceId === resource.id)?.isAllowed(action)
         },
-        findResult(resource: { kind: string; id: string }) {
-          return results.find((r) => r.resource.id === resource.id)
+        findResult(resource: { kind: string; id: string }): CerbosCheckResourceResult | undefined {
+          const match = results.find((r) => r.resourceId === resource.id)
+          return match ? { outputs: [] } : undefined
         },
       }
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any as CerbosClient
+  }
 }
 
 describe('decideApproval', () => {

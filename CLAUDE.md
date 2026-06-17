@@ -176,6 +176,13 @@ round-trip, wrong-keypair rejection, expiry, and tampering.
 ### `packages/policy-client`
 Cerbos HTTP client wrapper with typed check functions per resource.
 Key exports: `createCerbosClient()`, `checkQuery()`, `checkApproval()`, `checkDatabaseConnection()`, `checkAuditLog()`, `canSubmitQuery()`, `canApproveQuery()`.
+`CerbosClient`/`CerbosCheckResponse`/`CerbosCheckResourceResult` are narrowed interfaces (just `checkResources()`,
+`isAllowed()`, `findResult()` → `outputs`) instead of `@cerbos/http`'s full `HTTP`/`CheckResourcesResponse` classes —
+the real client structurally satisfies them for free, and test doubles can be plain object literals with zero
+`any`/`unknown` casts or `eslint-disable` comments. Request-building uses `attr` (not the deprecated `attributes`
+alias) on `Principal`/`Resource`, matching `@cerbos/core`'s current API guidance — Cerbos policy CEL always reads
+`request.principal.attr.*`/`request.resource.attr.*` regardless of which SDK field name was used to send it, so
+this was a modernization, not a bug fix.
 
 ### `packages/audit`
 Hash-chain audit log writer and integrity verifier.
