@@ -9,7 +9,6 @@ export const customRoles = pgTable('custom_roles', {
     .references(() => organizations.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   description: text('description'),
-  // Stores CustomRoleConfig: allowedTables, allowedColumns, allowedActions, rowFilters, rowCap
   config: jsonb('config').notNull().$type<CustomRoleConfig>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -21,7 +20,6 @@ export const policies = pgTable('policies', {
     .notNull()
     .references(() => organizations.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  // 'pii_mask' | 'time_restriction' | 'rate_limit_override'
   type: text('type').notNull(),
   config: jsonb('config').notNull().$type<Record<string, unknown>>(),
   enabled: boolean('enabled').notNull().default(true),

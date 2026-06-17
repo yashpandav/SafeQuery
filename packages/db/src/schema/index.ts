@@ -1,7 +1,5 @@
-// Enums — must be exported before tables so drizzle-kit picks them up
 export * from './enums'
 
-// Tables — exported in dependency order
 export * from './organizations'
 export * from './users'
 export * from './environments'

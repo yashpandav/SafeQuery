@@ -14,8 +14,6 @@ export async function verifyIntegrity(
   db: DbClient,
   orgId: string,
 ): Promise<IntegrityResult> {
-  // Order must be deterministic and match the order writer.ts uses to find prevHash.
-  // Secondary sort by id breaks timestamp ties consistently.
   const logs = await db
     .select()
     .from(auditLogs)

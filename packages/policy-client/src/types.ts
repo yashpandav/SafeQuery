@@ -1,30 +1,25 @@
 import type { PlatformRole } from '@repo/types'
 
-// ── Principal ─────────────────────────────────────────────────────────────────
-// Resolved once per request from the PASETO session + DB membership lookup.
-// Passed to every Cerbos check — never cached in a token.
 export interface CerbosPrincipal {
   userId: string
   platformRole: PlatformRole
   orgId: string
 }
 
-// ── Resource attribute shapes ─────────────────────────────────────────────────
-// Must match the attribute names referenced in infra/docker/cerbos/policies/*.yaml
 
 export interface QueryResourceAttrs {
   id: string
   orgId: string
-  riskLevel: string          // SAFE | WARNING | CRITICAL | SECURITY_INCIDENT
-  environment: string        // development | staging | production
-  submittedBy: string        // userId of the analyst who submitted
+  riskLevel: string
+  environment: string
+  submittedBy: string
 }
 
 export interface ApprovalResourceAttrs {
   id: string
   orgId: string
   submittedBy: string
-  status: string             // PENDING | APPROVED | REJECTED | EXPIRED
+  status: string
 }
 
 export interface DatabaseConnectionResourceAttrs {
@@ -38,7 +33,18 @@ export interface AuditLogResourceAttrs {
   actorId: string
 }
 
-// ── Action sets (keep in sync with Cerbos policy files) ──────────────────────
+export interface DbTableResourceAttrs {
+  table: string
+  orgId: string
+}
+
+export interface DbTablePrincipalAttrs {
+  tableScope: string[]
+  capabilities: DbTableAction[]
+  rowFilter: string | null
+  maskedColumns: string[]
+}
+
 export type QueryAction =
   | 'submit'
   | 'read_results'
@@ -59,5 +65,12 @@ export type DatabaseConnectionAction =
 
 export type AuditLogAction = 'read' | 'verify_integrity' | 'delete' | 'update'
 
-// Generic decision result: action → allowed
+export type DbTableAction = 'select' | 'insert' | 'update' | 'delete'
+
 export type DecisionMap<T extends string> = Record<T, boolean>
+
+export interface DbTableDecision {
+  allowed: DecisionMap<DbTableAction>
+  rowFilter: string | null
+  maskedColumns: string[]
+}

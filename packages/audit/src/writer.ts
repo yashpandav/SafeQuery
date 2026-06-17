@@ -26,10 +26,6 @@ export async function writeAuditLog(
   entry: WriteAuditLog,
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    // SELECT FOR UPDATE serializes concurrent writers for the same org.
-    // Edge case: if no rows exist yet (first write for this org), FOR UPDATE
-    // finds nothing to lock — two concurrent "genesis" writes could both see
-    // prevHash=null. verifyIntegrity will catch this. Fix in P1 with advisory locks.
     const last = await tx
       .select({ hash: auditLogs.hash })
       .from(auditLogs)

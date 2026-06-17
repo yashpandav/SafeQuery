@@ -39,7 +39,6 @@ export const approvalRequests = pgTable('approval_requests', {
     .references(() => organizations.id, { onDelete: 'cascade' }),
   reviewerId: uuid('reviewer_id').references(() => users.id),
   status: approvalStatusEnum('approval_status').notNull().default('PENDING'),
-  // EXPLAIN output (reads) or transactional dry-run result (writes) — shown to reviewer
   simulationResult: jsonb('simulation_result').$type<SimulationResult>(),
   decisionNote: text('decision_note'),
   decidedAt: timestamp('decided_at', { withTimezone: true }),

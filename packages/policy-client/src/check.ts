@@ -5,14 +5,17 @@ import type {
   ApprovalResourceAttrs,
   DatabaseConnectionResourceAttrs,
   AuditLogResourceAttrs,
+  DbTableResourceAttrs,
+  DbTablePrincipalAttrs,
   QueryAction,
   ApprovalAction,
   DatabaseConnectionAction,
   AuditLogAction,
+  DbTableAction,
   DecisionMap,
+  DbTableDecision,
 } from './types'
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
 
 function buildPrincipal(p: CerbosPrincipal) {
   return {
@@ -22,9 +25,6 @@ function buildPrincipal(p: CerbosPrincipal) {
   }
 }
 
-// Calls checkResources for a single resource + action set and returns a typed
-// decision map.  Using a single checkResources call per resource keeps the
-// function simple; batch calls can be composed at the callsite when needed.
 async function check<T extends string>(
   client: CerbosClient,
   principal: CerbosPrincipal,
@@ -51,7 +51,6 @@ async function check<T extends string>(
   ) as DecisionMap<T>
 }
 
-// ── Public check functions ────────────────────────────────────────────────────
 
 export async function checkQuery(
   client: CerbosClient,
@@ -103,7 +102,52 @@ export async function checkAuditLog(
   }, actions)
 }
 
-// ── Convenience single-action helpers ────────────────────────────────────────
+export async function checkDbTable(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  dbAttrs: DbTablePrincipalAttrs,
+  resource: DbTableResourceAttrs,
+  actions: DbTableAction[],
+): Promise<DbTableDecision> {
+  const result = await client.checkResources({
+    principal: {
+      id: principal.userId,
+      roles: [principal.platformRole],
+      attributes: {
+        org_id: principal.orgId,
+        table_scope: dbAttrs.tableScope,
+        capabilities: dbAttrs.capabilities,
+        row_filter: dbAttrs.rowFilter,
+        masked_columns: dbAttrs.maskedColumns,
+      },
+    },
+    resources: [
+      {
+        resource: { kind: 'db_table', id: resource.table, attributes: { org_id: resource.orgId } },
+        actions,
+      },
+    ],
+  })
+
+  const allowed = Object.fromEntries(
+    actions.map((action) => [
+      action,
+      result.isAllowed({ resource: { kind: 'db_table', id: resource.table }, action }),
+    ]),
+  ) as DecisionMap<DbTableAction>
+
+  const resourceResult = result.findResult({ kind: 'db_table', id: resource.table })
+  const output = resourceResult?.outputs[0]?.value as
+    | { rowFilter?: string | null; maskedColumns?: string[] }
+    | undefined
+
+  return {
+    allowed,
+    rowFilter: output?.rowFilter ?? null,
+    maskedColumns: output?.maskedColumns ?? [],
+  }
+}
+
 
 export async function canSubmitQuery(
   client: CerbosClient,

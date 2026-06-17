@@ -1,7 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import type { KeycloakTokenPayload } from './types'
 
-// JWKS sets are cached per (keycloakUrl, realm) pair — they auto-refresh on key rotation
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
 function getJwks(keycloakUrl: string, realm: string) {

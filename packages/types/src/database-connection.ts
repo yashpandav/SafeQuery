@@ -16,8 +16,6 @@ export const CreateEnvironmentSchema = z.object({
 })
 export type CreateEnvironment = z.infer<typeof CreateEnvironmentSchema>
 
-// Full connection details — only returned to admin/owner roles.
-// Analyst/reviewer get DatabaseConnectionMetadata (below).
 export const DatabaseConnectionSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
@@ -32,7 +30,6 @@ export const DatabaseConnectionSchema = z.object({
 })
 export type DatabaseConnection = z.infer<typeof DatabaseConnectionSchema>
 
-// Credential-stripped view exposed to non-admin roles
 export const DatabaseConnectionMetadataSchema = DatabaseConnectionSchema.pick({
   id: true,
   orgId: true,
@@ -55,7 +52,6 @@ export const CreateDatabaseConnectionSchema = z.object({
 })
 export type CreateDatabaseConnection = z.infer<typeof CreateDatabaseConnectionSchema>
 
-// Table column definition stored in schema snapshots
 export const ColumnDefinitionSchema = z.object({
   column: z.string(),
   type: z.string(),

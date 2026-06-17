@@ -30,7 +30,7 @@ my-turborepo/
 │   ├── types/            # Shared Zod schemas + TypeScript types ✅ BUILT
 │   ├── auth/             # Keycloak OIDC + PASETO v3.local helpers ✅ BUILT
 │   ├── db/               # Drizzle ORM schema + RLS + migrations ✅ BUILT
-│   ├── sql-validator/    # AST parsing, Cerbos decisions, row-filter injection (NOT YET CREATED)
+│   ├── sql-validator/    # AST parsing, Cerbos decisions, row-filter injection ✅ BUILT
 │   ├── policy-client/    # Cerbos HTTP client wrapper ✅ BUILT
 │   ├── audit/            # Hash-chain audit writer + verify-integrity ✅ BUILT
 │   ├── rate-limit/       # rate-limiter-flexible wrappers (NOT YET CREATED)
@@ -166,6 +166,19 @@ Hash-chain audit log writer and integrity verifier.
 Key exports: `writeAuditLog(db, entry)`, `verifyIntegrity(db, orgId)`.
 Writer uses `db.transaction()` + `SELECT FOR UPDATE` to serialize concurrent writes.
 
+### `packages/sql-validator`
+AST-based validation of AI-generated SQL (Postgres dialect, via `node-sql-parser`). Never trusts the
+raw SQL string to execute — always returns the AST-rewritten version.
+Key export: `validateSql({ sql, cerbosClient, principal, customRole, environment })` → `ValidatorOutput`.
+Pipeline: parse (paranoid single-statement enforcement) → comment/forbidden-statement-type/system-table
+checks → local column-restriction check → per-table Cerbos `checkDbTable` authorization → row-filter
+injection (AST-level, never string-concatenated) → structural warnings (missing LIMIT, excessive joins,
+unfiltered destructive write) → risk classification (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT).
+Any error-severity violation (parse failure, multi-statement, forbidden table, unauthorized table/column,
+invalid row filter) is always SECURITY_INCIDENT — there is no approval path for those, unlike CRITICAL.
+65 adversarial unit tests (`pnpm --filter @repo/sql-validator test`, vitest) cover injection corpora,
+statement smuggling via row-filter strings, cross-tenant access, and privilege escalation attempts.
+
 ### `apps/api`
 Express server with tRPC router. Three-tier procedure hierarchy:
 - `baseProcedure` — public
@@ -191,6 +204,10 @@ Policy files follow Cerbos `api.cerbos.dev/v1` schema:
 - `derived_roles_query.yaml` — `query_owner`
 - `derived_roles_approval.yaml` — `request_submitter`
 - `derived_roles_audit.yaml` — `log_actor`
+- `db_table.yaml` — the one generic, per-product policy for raw data-table access (see PROOF_OF_CONCEPT.md
+  §16). Attribute-only, no Cerbos roles — gates on `org_id` match + table in `table_scope` + action in
+  `capabilities`, all flattened from the caller's resolved `CustomRoleConfig`. Echoes back `rowFilter` /
+  `maskedColumns` as output for `sql-validator` to inject; never invents them itself.
 
 ### Keycloak (`infra/docker/keycloak/safequery-realm.json`)
 Realm `safequery`, client `safequery-web` (public PKCE), client `safequery-api` (confidential).

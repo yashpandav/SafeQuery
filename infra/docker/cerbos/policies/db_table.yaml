@@ -1,0 +1,21 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "db_table"
+  rules:
+    - actions: ["select", "insert", "update", "delete"]
+      effect: EFFECT_ALLOW
+      roles: ["*"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.org_id == request.principal.attr.org_id
+              - expr: request.resource.id in request.principal.attr.table_scope
+              - expr: request.action in request.principal.attr.capabilities
+      output:
+        when:
+          ruleActivated:
+            expr: >
+              {"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}
