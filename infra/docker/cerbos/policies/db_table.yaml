@@ -4,7 +4,7 @@ resourcePolicy:
   version: "default"
   resource: "db_table"
   rules:
-    - actions: ["select", "insert", "update", "delete"]
+    - actions: ["select"]
       effect: EFFECT_ALLOW
       roles: ["*"]
       condition:
@@ -13,7 +13,49 @@ resourcePolicy:
             of:
               - expr: request.resource.attr.org_id == request.principal.attr.org_id
               - expr: request.resource.id in request.principal.attr.table_scope
-              - expr: request.action in request.principal.attr.capabilities
+              - expr: "'select' in request.principal.attr.capabilities"
+      output:
+        when:
+          ruleActivated: '{"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}'
+
+    - actions: ["insert"]
+      effect: EFFECT_ALLOW
+      roles: ["*"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.org_id == request.principal.attr.org_id
+              - expr: request.resource.id in request.principal.attr.table_scope
+              - expr: "'insert' in request.principal.attr.capabilities"
+      output:
+        when:
+          ruleActivated: '{"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}'
+
+    - actions: ["update"]
+      effect: EFFECT_ALLOW
+      roles: ["*"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.org_id == request.principal.attr.org_id
+              - expr: request.resource.id in request.principal.attr.table_scope
+              - expr: "'update' in request.principal.attr.capabilities"
+      output:
+        when:
+          ruleActivated: '{"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}'
+
+    - actions: ["delete"]
+      effect: EFFECT_ALLOW
+      roles: ["*"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.org_id == request.principal.attr.org_id
+              - expr: request.resource.id in request.principal.attr.table_scope
+              - expr: "'delete' in request.principal.attr.capabilities"
       output:
         when:
           ruleActivated: '{"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}'

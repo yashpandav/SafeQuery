@@ -263,6 +263,65 @@
     },
     {
       "name": "4. Submit Queries",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function isValidUUID(v) {",
+              "  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v || '');",
+              "}",
+              "",
+              "const sessionToken = pm.environment.get('analystSessionToken');",
+              "const orgId = pm.environment.get('orgId');",
+              "",
+              "if (!sessionToken) {",
+              "  throw new Error('analystSessionToken is not set — run folder \"2. SafeQuery Auth\" (Exchange Token Analyst) first.');",
+              "}",
+              "if (!isValidUUID(orgId)) {",
+              "  throw new Error('orgId is not a valid UUID — run `pnpm --filter @repo/db db:seed` and paste the printed orgId into this environment.');",
+              "}",
+              "",
+              "const needsDev = !isValidUUID(pm.environment.get('connectionIdDev'));",
+              "const needsProd = !isValidUUID(pm.environment.get('connectionIdProd'));",
+              "",
+              "if (!needsDev && !needsProd) return;",
+              "",
+              "pm.sendRequest({",
+              "  url: pm.environment.get('baseUrl') + '/trpc/databaseConnection.list',",
+              "  method: 'GET',",
+              "  header: {",
+              "    Authorization: 'Bearer ' + sessionToken,",
+              "    'X-Org-Id': orgId,",
+              "  },",
+              "}, function (err, res) {",
+              "  if (err) {",
+              "    throw new Error('Could not auto-resolve connection IDs from databaseConnection.list: ' + err);",
+              "  }",
+              "  const json = res.json();",
+              "  const connections = (json.result && json.result.data) || [];",
+              "",
+              "  if (needsDev) {",
+              "    const devConn = connections.find((c) => /dev/i.test(c.name));",
+              "    if (devConn) {",
+              "      pm.environment.set('connectionIdDev', devConn.id);",
+              "    } else {",
+              "      throw new Error('No dev connection found via databaseConnection.list — run folder \"3. Database Connections\" first.');",
+              "    }",
+              "  }",
+              "  if (needsProd) {",
+              "    const prodConn = connections.find((c) => /prod/i.test(c.name));",
+              "    if (prodConn) {",
+              "      pm.environment.set('connectionIdProd', prodConn.id);",
+              "    } else {",
+              "      throw new Error('No prod connection found via databaseConnection.list — run folder \"3. Database Connections\" first.');",
+              "    }",
+              "  }",
+              "});"
+            ]
+          }
+        }
+      ],
       "item": [
         {
           "name": "Submit SAFE Query (read, dev)",
@@ -349,6 +408,28 @@
     },
     {
       "name": "5. Approval Decision (run as Reviewer — four-eyes blocks the Analyst)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "function isValidUUID(v) {",
+              "  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v || '');",
+              "}",
+              "",
+              "if (!pm.environment.get('reviewerSessionToken')) {",
+              "  throw new Error('reviewerSessionToken is not set — run folder \"2. SafeQuery Auth\" (Exchange Token Reviewer) first.');",
+              "}",
+              "if (!isValidUUID(pm.environment.get('orgId'))) {",
+              "  throw new Error('orgId is not a valid UUID — run `pnpm --filter @repo/db db:seed` and paste the printed orgId into this environment.');",
+              "}",
+              "if (!isValidUUID(pm.environment.get('approvalRequestId'))) {",
+              "  throw new Error('approvalRequestId is not set — run \"Submit CRITICAL Query\" in folder \"4. Submit Queries\" first; its Tests script populates this automatically.');",
+              "}"
+            ]
+          }
+        }
+      ],
       "item": [
         {
           "name": "Decide Approval — APPROVE",
