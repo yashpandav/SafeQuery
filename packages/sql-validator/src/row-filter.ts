@@ -1,6 +1,8 @@
-import { Parser } from 'node-sql-parser'
+import pkg from 'node-sql-parser'
 import type { AST, Select, Update, Delete } from 'node-sql-parser'
 import { parseExpressionFragment } from './parse'
+
+const { Parser } = pkg
 
 const DIALECT = { database: 'postgresql' } as const
 const parser = new Parser()

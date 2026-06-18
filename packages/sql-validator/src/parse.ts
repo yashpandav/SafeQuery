@@ -1,5 +1,7 @@
-import { Parser } from 'node-sql-parser'
+import pkg from 'node-sql-parser'
 import type { AST, Select } from 'node-sql-parser'
+
+const { Parser } = pkg
 
 const DIALECT = { database: 'postgresql' } as const
 

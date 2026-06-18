@@ -16,6 +16,4 @@ resourcePolicy:
               - expr: request.action in request.principal.attr.capabilities
       output:
         when:
-          ruleActivated:
-            expr: >
-              {"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}
+          ruleActivated: '{"rowFilter": request.principal.attr.row_filter, "maskedColumns": request.principal.attr.masked_columns}'

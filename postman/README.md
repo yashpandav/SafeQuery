@@ -31,7 +31,7 @@ generated PASETO/credential keys filled in. Don't reuse these for anything beyon
 pnpm install
 pnpm --filter @repo/db db:migrate
 # then apply RLS (psql must be on your PATH, or use any Postgres client):
-psql postgresql://safequery:safequery_dev@localhost:5432/safequery -f packages/db/src/rls-policies.sql
+psql postgresql://safequery:safequery_dev@localhost:5434/safequery -f packages/db/src/rls-policies.sql
 ```
 
 ## 4. Start the apps
@@ -90,7 +90,7 @@ trail: `QUERY_SUBMITTED`, `QUERY_EXECUTED`, `APPROVAL_REQUESTED`, `APPROVAL_APPR
 To see the actual customer data change after approving the CRITICAL write:
 
 ```bash
-psql postgresql://demo_analyst:demo_analyst_dev@localhost:5432/customer_demo -c "SELECT * FROM customers;"
+psql postgresql://demo_analyst:demo_analyst_dev@localhost:5434/customer_demo -c "SELECT * FROM customers;"
 ```
 
 ## If something fails
@@ -101,7 +101,7 @@ psql postgresql://demo_analyst:demo_analyst_dev@localhost:5432/customer_demo -c 
 - **Job timeout / no response from query.submit or databaseConnection.\*** — `apps/tre-dispatcher`
   isn't running, or it can't reach Redis (check its terminal output).
 - **`databaseConnection.create` returns `BAD_REQUEST: Connectivity test failed`** —
-  `apps/tre-dispatcher` can't reach Postgres on `localhost:5432`; confirm
+  `apps/tre-dispatcher` can't reach Postgres on `localhost:5434`; confirm
   `docker compose ps` shows postgres healthy and the port mapping matches `infra/docker/.env`.
 - **`riskLevel: SECURITY_INCIDENT` on a query you expected to be SAFE** — check
   `apps/ai-service`'s terminal output; either `OPENAI_API_KEY` is wrong/missing, or the
