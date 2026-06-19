@@ -2,6 +2,9 @@
 
 import type { inferRouterOutputs } from '@trpc/server'
 import type { AppRouter } from '@repo/api/router'
+import { Badge, type RiskTone } from './components/badge'
+import { Button } from './components/button'
+import { Card } from './components/card'
 
 type RouterOutputs = inferRouterOutputs<AppRouter>
 export type SubmitResult = RouterOutputs['query']['submit']
@@ -12,11 +15,19 @@ interface QueryResultProps {
   acknowledging: boolean
 }
 
-const BANNER_CLASS: Record<SubmitResult['riskLevel'], string> = {
-  SAFE: 'border-safe/40 bg-safe-bg text-safe',
-  WARNING: 'border-warning/40 bg-warning-bg text-warning',
-  CRITICAL: 'border-critical/40 bg-critical-bg text-critical',
-  SECURITY_INCIDENT: 'border-danger/40 bg-danger-bg text-danger',
+const RISK_TONE: Record<SubmitResult['riskLevel'], RiskTone> = {
+  SAFE: 'safe',
+  WARNING: 'warning',
+  CRITICAL: 'critical',
+  SECURITY_INCIDENT: 'incident',
+}
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="mt-3 overflow-x-auto rounded-lg bg-code-bg p-3 text-xs whitespace-pre-wrap text-code-fg">
+      <code>{children}</code>
+    </pre>
+  )
 }
 
 function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }) {
@@ -28,7 +39,7 @@ function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }
           <thead>
             <tr>
               {result.columns.map((col) => (
-                <th key={col} className="border border-border px-3 py-1.5 text-left font-medium">
+                <th key={col} className="border-b border-border px-3 py-1.5 text-left font-medium">
                   {col}
                 </th>
               ))}
@@ -36,9 +47,9 @@ function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }
           </thead>
           <tbody>
             {result.rows.map((row, i) => (
-              <tr key={i}>
+              <tr key={i} className="hover:bg-black/[0.02]">
                 {result.columns.map((col) => (
-                  <td key={col} className="border border-border px-3 py-1.5">
+                  <td key={col} className="border-b border-border px-3 py-1.5">
                     {String(row[col] ?? '')}
                   </td>
                 ))}
@@ -57,17 +68,13 @@ function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }
 
 export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResultProps) {
   return (
-    <div className="rounded-lg border border-border p-4">
-      <div role="status" className={`rounded border px-3 py-2 text-sm ${BANNER_CLASS[result.riskLevel]}`}>
-        <strong>{result.riskLevel}</strong>
-        {result.explanation ? ` — ${result.explanation}` : ''}
+    <Card>
+      <div role="status" className="flex items-center gap-2">
+        <Badge tone={RISK_TONE[result.riskLevel]}>{result.riskLevel.replace('_', ' ')}</Badge>
+        {result.explanation && <span className="text-sm text-muted">{result.explanation}</span>}
       </div>
 
-      {result.rewrittenSql && (
-        <pre className="mt-3 overflow-x-auto rounded bg-black/5 p-3 text-xs whitespace-pre-wrap dark:bg-white/10">
-          <code>{result.rewrittenSql}</code>
-        </pre>
-      )}
+      {result.rewrittenSql && <CodeBlock>{result.rewrittenSql}</CodeBlock>}
 
       {result.violations.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-muted">
@@ -78,34 +85,27 @@ export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResul
       )}
 
       {result.riskLevel === 'WARNING' && result.requiresAcknowledgment && result.simulation && (
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-sm">
-            Estimated rows: <strong>{result.simulation.estimatedRowCount ?? 'unknown'}</strong>
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-warning-bg px-3 py-2">
+          <p className="text-sm text-warning">
+            Estimated rows: <strong>{result.simulation.estimatedRowCount ?? 'unknown'}</strong> — nothing has run yet.
           </p>
-          <button
-            type="button"
-            onClick={onAcknowledge}
-            disabled={acknowledging}
-            className="rounded bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={onAcknowledge} disabled={acknowledging}>
             {acknowledging ? 'Running…' : 'Acknowledge & Run'}
-          </button>
+          </Button>
         </div>
       )}
 
       {result.riskLevel === 'CRITICAL' && result.requiresApproval && (
         <div className="mt-3">
-          <p className="text-sm">Awaiting reviewer approval. Request ID:</p>
-          <pre className="mt-1 overflow-x-auto rounded bg-black/5 p-2 text-xs dark:bg-white/10">
-            <code>{result.approvalRequestId}</code>
-          </pre>
+          <p className="text-sm text-muted">Awaiting reviewer approval. Request ID:</p>
+          <CodeBlock>{result.approvalRequestId}</CodeBlock>
           {result.simulation && (
             <>
               <p className="mt-2 text-sm text-muted">
-                Dry-run affected {result.simulation.affectedRows ?? 0} row(s) — nothing committed yet.
+                Dry-run preview · rolled back, nothing committed — affected {result.simulation.affectedRows ?? 0} row(s).
               </p>
               {result.simulation.previewRows && result.simulation.previewRows.length > 0 && (
-                <pre className="mt-1 overflow-x-auto rounded bg-black/5 p-2 text-xs dark:bg-white/10">
+                <pre className="mt-1 overflow-x-auto rounded-lg border border-border bg-neutral-bg p-2 text-xs text-foreground">
                   {JSON.stringify(result.simulation.previewRows, null, 2)}
                 </pre>
               )}
@@ -119,6 +119,6 @@ export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResul
           <ResultTable result={result.result} />
         </div>
       )}
-    </div>
+    </Card>
   )
 }

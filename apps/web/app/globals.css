@@ -1,29 +1,28 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-background: #ffffff;
-  --color-foreground: #171717;
-  --color-border: #e5e7eb;
-  --color-muted: #6b7280;
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-safe: #16a34a;
-  --color-safe-bg: #f0fdf4;
-  --color-warning: #b45309;
-  --color-warning-bg: #fffbeb;
-  --color-critical: #c2410c;
-  --color-critical-bg: #fff7ed;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef2f2;
-}
+  --color-background: #fafaf9;
+  --color-surface: #ffffff;
+  --color-foreground: #111210;
+  --color-border: #e4e4e1;
+  --color-muted: #6b6b66;
+  --color-ink: #111210;
+  --color-ink-hover: #2a2b27;
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-background: #0a0a0a;
-    --color-foreground: #ededed;
-    --color-border: #27272a;
-    --color-muted: #9ca3af;
-  }
+  --color-safe: #15803d;
+  --color-safe-bg: #ecfdf3;
+  --color-warning: #b45309;
+  --color-warning-bg: #fef7e6;
+  --color-critical: #b91c1c;
+  --color-critical-bg: #fdedec;
+  --color-incident: #1d4ed8;
+  --color-incident-bg: #eaf0fe;
+  --color-neutral: #57534e;
+  --color-neutral-bg: #f0efed;
+
+  /* The one deliberate dark surface in the system (SQL code chips) — fixed, doesn't flip with theme. */
+  --color-code-bg: #111210;
+  --color-code-fg: #e5e5e1;
 }
 
 html,
@@ -39,6 +38,6 @@ body {
 }
 
 *:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
 }

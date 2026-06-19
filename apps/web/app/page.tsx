@@ -6,6 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useTRPC } from '../trpc/client'
 import { useSession } from '../lib/session'
 import { QueryResult, type SubmitResult } from './query-result'
+import { Button } from './components/button'
 
 export default function ChatPage() {
   const { session } = useSession()
@@ -42,7 +43,11 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">Ask a question</h1>
-      <form onSubmit={handleSubmit} aria-label="Submit a query" className="flex flex-col gap-3 rounded-lg border border-border p-4">
+      <form
+        onSubmit={handleSubmit}
+        aria-label="Submit a query"
+        className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
+      >
         <div className="flex flex-col gap-1">
           <label htmlFor="connection" className="text-sm text-muted">
             Database connection
@@ -53,7 +58,7 @@ export default function ChatPage() {
             aria-required="true"
             value={connectionId}
             onChange={(e) => setConnectionId(e.target.value)}
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           >
             <option value="">Select a connection…</option>
             {connections.data?.map((c) => (
@@ -75,20 +80,16 @@ export default function ChatPage() {
             value={naturalLanguage}
             onChange={(e) => setNaturalLanguage(e.target.value)}
             placeholder="e.g. Show me all active customers"
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
-        <button
-          type="submit"
-          disabled={submitQuery.isPending}
-          className="self-start rounded bg-primary px-4 py-2 font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={submitQuery.isPending} className="self-start">
           {submitQuery.isPending ? 'Submitting…' : 'Submit'}
-        </button>
+        </Button>
       </form>
 
       {submitQuery.isError && (
-        <div role="alert" className="rounded border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
+        <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
           {submitQuery.error.message}
         </div>
       )}

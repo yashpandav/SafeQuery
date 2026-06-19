@@ -502,7 +502,7 @@ plumbing, not a different programming model — that's a deliberate ergonomics c
 |---|---|---|
 | `test_connection` | Connects with raw plaintext creds, runs `SELECT 1` | **Encrypts on success** — the only place a new connection's credentials are ever encrypted, since the master key only lives here |
 | `capture_schema` | Queries `information_schema.columns` | Flags likely-PII columns by *name* (a hint for the AI prompt — Cerbos's `maskedColumns` output is the real enforcement, not this heuristic) |
-| `execute_read` | `BEGIN TRANSACTION READ ONLY`, cursor-fetch `rowCap + 1` rows, `ROLLBACK` | The `+1` row is how it detects truncation without a separate `COUNT(*)`; masks columns before returning |
+| `execute_read` | `BEGIN TRANSACTION READ ONLY`, cursor-fetch `rowCap + 1` rows, `ROLLBACK` — or, when `explainOnly: true`, runs `EXPLAIN (FORMAT JSON) <sql>` instead and never fetches a row | The `+1` row is how it detects truncation without a separate `COUNT(*)`; masks columns before returning. `explainOnly` is the WARNING path's simulation — same read-only transaction, same `ROLLBACK`, just a planner estimate instead of real rows |
 | `execute_write` | `BEGIN`, append `RETURNING *`, then `ROLLBACK` (dry-run) or `COMMIT` (after approval) | The dry-run *is* a real transaction that really runs — it just never commits, so the "preview" is exact, not a guess |
 
 ---
@@ -551,24 +551,41 @@ happens when a user asks a question."
 8. A `query_logs` row is persisted, and a `QUERY_SUBMITTED` audit entry is written
    (`packages/audit` — hash-chained, Part-9-worthy on its own if asked).
 9. **Branch on risk level** (Part 6's queue is what actually runs the SQL):
-   - **SAFE/WARNING** → enqueue `execute_read` *immediately*, update `query_logs` to
-     `EXECUTED`/`FAILED`, return masked rows in the same HTTP response.
+   - **SAFE** → enqueue `execute_read` *immediately*, update `query_logs` to `EXECUTED`/`FAILED`,
+     return masked rows in the same HTTP response.
+   - **WARNING** → enqueue `execute_read` with `explainOnly: true` — no rows fetched, just the
+     planner's `Plan Rows` estimate, returned as `query_logs.simulationResult` with
+     `status = 'AWAITING_ACKNOWLEDGMENT'`. Nothing executes yet; the response tells the caller
+     `requiresAcknowledgment: true`.
    - **CRITICAL** → enqueue `execute_write` with `dryRun: true` (a real `ROLLBACK`ed transaction,
      exact preview), store the result as `approval_requests.simulationResult`, create the
      approval request. Nothing has touched real data yet.
    - **SECURITY_INCIDENT** → persist as `FAILED`, write a `SECURITY_INCIDENT_DETECTED` audit
      entry, nothing enqueued, no approval path exists to bypass.
-10. Later, for a CRITICAL query: a **Reviewer** calls `approval.decide`. Cerbos's four-eyes
-    `DENY` rule (in `approval_request.yaml`) rejects if `submitted_by == principal.id` — the
-    submitter literally cannot approve their own write, enforced by policy, not an `if` in
-    `apps/api`. On approval, the **same validated SQL** is enqueued again as `execute_write` with
-    `dryRun: false` — nothing is copied from the earlier dry-run; this fresh `COMMIT` is the only
-    thing that ever reaches production data.
+10. For a WARNING query, the *same* caller later calls **`query.acknowledge`** with the
+    `queryLogId` — CONFLICT unless still `AWAITING_ACKNOWLEDGMENT`, FORBIDDEN unless they're the
+    original submitter (this is a self-service continuation of a request they already had
+    authorized, not a new Cerbos decision). On success it re-enqueues `execute_read` for real
+    (`explainOnly` unset) using the exact `rowCap`/`maskedColumns` persisted on `query_logs` at
+    submit time, then updates `EXECUTED`/`FAILED` just like the SAFE path.
+11. For a CRITICAL query: a **Reviewer** first calls **`approval.list`**, which Cerbos filters down
+    to what they're allowed to `read` in one batched `checkResources` call (reviewers see every
+    request in the org; analysts only see ones they submitted) — then **`approval.decide`**.
+    Cerbos's four-eyes `DENY` rule (in `approval_request.yaml`) rejects if
+    `submitted_by == principal.id` — the submitter literally cannot approve their own write,
+    enforced by policy, not an `if` in `apps/api`. On approval, the **same validated SQL** is
+    enqueued again as `execute_write` with `dryRun: false` — nothing is copied from the earlier
+    dry-run; this fresh `COMMIT` is the only thing that ever reaches production data.
 
 Every step above writes to the hash-chained `audit_logs` table — that's `packages/audit`'s job
 (`writeAuditLog()`, using `SELECT ... FOR UPDATE` to serialize concurrent writers so the hash
 chain can't fork), and it's why "0 blind executions, 100% of state-changing actions logged" is a
 property of the code, not a claim about intentions.
+
+**One more endpoint worth knowing about, even though it's outside the query lifecycle:**
+`organization.list` is `authedProcedure`, not `orgProcedure` — it's how the web login page
+discovers which orgs a user belongs to (and lets them pick one) without an org already selected,
+which is exactly why it can't require `X-Org-Id` the way every other procedure in this list does.
 
 ---
 

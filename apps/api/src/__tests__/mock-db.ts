@@ -11,6 +11,8 @@ export interface MockDbFixtures {
   queryLogsList?: unknown[]
   organizationMembersList?: unknown[]
   organizationsList?: unknown[]
+  auditLogsList?: unknown[]
+  usersList?: unknown[]
 }
 
 export function createMockDb(fixtures: MockDbFixtures) {
@@ -68,6 +70,8 @@ export function createMockDb(fixtures: MockDbFixtures) {
       schemaSnapshots: { findFirst: () => Promise<unknown> }
       approvalRequests: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       queryLogs: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
+      auditLogs: { findMany: () => Promise<unknown[]> }
+      users: { findMany: () => Promise<unknown[]> }
     }
     select: () => ReturnType<typeof chainableSelect>
     insert: (table: unknown) => ReturnType<typeof chainableInsert>
@@ -96,6 +100,8 @@ export function createMockDb(fixtures: MockDbFixtures) {
         findFirst: async () => fixtures.queryLogs ?? null,
         findMany: async () => fixtures.queryLogsList ?? [],
       },
+      auditLogs: { findMany: async () => fixtures.auditLogsList ?? [] },
+      users: { findMany: async () => fixtures.usersList ?? [] },
     },
     select: () => chainableSelect(),
     insert: (table: unknown) => chainableInsert(table),

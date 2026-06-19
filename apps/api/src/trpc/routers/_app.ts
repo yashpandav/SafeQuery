@@ -5,6 +5,7 @@ import { queryRouter } from './query'
 import { databaseConnectionRouter } from './database-connection'
 import { approvalRouter } from './approval'
 import { organizationRouter } from './organization'
+import { auditRouter } from './audit'
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -13,5 +14,6 @@ export const appRouter = createTRPCRouter({
   databaseConnection: databaseConnectionRouter,
   approval: approvalRouter,
   organization: organizationRouter,
+  audit: auditRouter,
 })
 export type AppRouter = typeof appRouter

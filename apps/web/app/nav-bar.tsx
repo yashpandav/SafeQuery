@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession } from '../lib/session'
+import { Button } from './components/button'
 
 export function NavBar() {
   const { session, setSession } = useSession()
@@ -14,7 +15,7 @@ export function NavBar() {
   }
 
   return (
-    <nav className="flex items-center justify-between border-b border-border px-6 py-3" aria-label="Main navigation">
+    <nav className="flex items-center justify-between border-b border-border bg-surface px-6 py-3" aria-label="Main navigation">
       <Link href="/" className="text-base font-bold">
         SafeQuery
       </Link>
@@ -26,14 +27,13 @@ export function NavBar() {
           <Link href="/approvals" className="hover:underline">
             Approvals
           </Link>
+          <Link href="/audit-log" className="hover:underline">
+            Audit log
+          </Link>
           <span className="text-muted">{session.email}</span>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="rounded border border-border px-3 py-1.5 hover:bg-black/5 dark:hover:bg-white/10"
-          >
+          <Button variant="secondary" onClick={handleLogout}>
             Log out
-          </button>
+          </Button>
         </div>
       )}
     </nav>

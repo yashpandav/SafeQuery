@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useTRPC } from '../../trpc/client'
 import { useSession } from '../../lib/session'
+import { Card } from '../components/card'
+import { Button } from '../components/button'
 
 const KEYCLOAK_URL = process.env['NEXT_PUBLIC_KEYCLOAK_URL'] ?? 'http://localhost:8080'
 
@@ -61,13 +63,13 @@ export default function LoginPage() {
 
   if (awaitingOrgSelection) {
     return (
-      <div className="mx-auto mt-12 max-w-sm rounded-lg border border-border p-6">
+      <Card className="mx-auto mt-12 max-w-sm">
         <h1 className="text-xl font-semibold">Select an organization</h1>
         <p className="mt-1 mb-4 text-sm text-muted">Pulled live from your memberships — nothing pasted or hardcoded.</p>
 
         {organizations.isPending && <p className="text-sm text-muted">Loading…</p>}
         {organizations.isError && (
-          <div role="alert" className="rounded border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
+          <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
             {organizations.error.message}
           </div>
         )}
@@ -83,7 +85,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => selectOrganization(org.id)}
-                className="flex w-full items-center justify-between rounded border border-border px-3 py-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
+                className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-left text-sm transition hover:bg-black/[0.03] active:scale-[0.99]"
               >
                 <span className="font-medium">{org.name}</span>
                 <span className="text-xs text-muted">{org.platformRole}</span>
@@ -91,14 +93,14 @@ export default function LoginPage() {
             </li>
           ))}
         </ul>
-      </div>
+      </Card>
     )
   }
 
   const submitting = exchangeToken.isPending
 
   return (
-    <div className="mx-auto mt-12 max-w-sm rounded-lg border border-border p-6">
+    <Card className="mx-auto mt-12 max-w-sm">
       <h1 className="text-xl font-semibold">Sign in</h1>
       <p className="mt-1 mb-4 text-sm text-muted">
         Dev-only direct grant against Keycloak — production would use OIDC redirect + PKCE instead.
@@ -115,7 +117,7 @@ export default function LoginPage() {
             aria-required="true"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -129,22 +131,18 @@ export default function LoginPage() {
             aria-required="true"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
         {error && (
-          <div role="alert" className="rounded border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
+          <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
             {error}
           </div>
         )}
-        <button
-          type="submit"
-          disabled={submitting}
-          className="rounded bg-primary px-4 py-2 font-medium text-white hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button type="submit" variant="primary" disabled={submitting}>
           {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
+        </Button>
       </form>
-    </div>
+    </Card>
   )
 }

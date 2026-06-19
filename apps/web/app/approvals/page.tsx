@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useTRPC } from '../../trpc/client'
 import { useSession } from '../../lib/session'
+import { Badge, type RiskTone } from '../components/badge'
+import { Button } from '../components/button'
+import { Card } from '../components/card'
 
-const STATUS_CLASS: Record<string, string> = {
-  PENDING: 'border-warning/40 bg-warning-bg text-warning',
-  APPROVED: 'border-safe/40 bg-safe-bg text-safe',
-  REJECTED: 'border-danger/40 bg-danger-bg text-danger',
-  EXPIRED: 'border-border text-muted',
+const STATUS_TONE: Record<string, RiskTone> = {
+  PENDING: 'warning',
+  APPROVED: 'safe',
+  REJECTED: 'critical',
+  EXPIRED: 'neutral',
 }
 
 export default function ApprovalsPage() {
@@ -48,7 +51,7 @@ export default function ApprovalsPage() {
       <div className="flex flex-col gap-2">
         {approvals.isPending && <p className="text-sm text-muted">Loading…</p>}
         {approvals.isError && (
-          <div role="alert" className="rounded border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
+          <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
             {approvals.error.message}
           </div>
         )}
@@ -59,20 +62,20 @@ export default function ApprovalsPage() {
             type="button"
             onClick={() => setApprovalRequestId(a.id)}
             aria-pressed={approvalRequestId === a.id}
-            className={`rounded border p-3 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10 ${
-              approvalRequestId === a.id ? 'border-primary' : 'border-border'
+            className={`rounded-lg border bg-surface p-3 text-left text-sm transition hover:bg-black/[0.02] ${
+              approvalRequestId === a.id ? 'border-ink' : 'border-border'
             }`}
           >
             <div className="flex items-center justify-between gap-2">
               <span className="font-medium">{a.naturalLanguage}</span>
-              <span className={`rounded border px-2 py-0.5 text-xs ${STATUS_CLASS[a.status] ?? 'border-border'}`}>{a.status}</span>
+              <Badge tone={STATUS_TONE[a.status] ?? 'neutral'}>{a.status}</Badge>
             </div>
             <code className="mt-1 block text-xs text-muted">{a.generatedSql}</code>
           </button>
         ))}
       </div>
 
-      <form aria-label="Decide approval request" className="flex flex-col gap-3 rounded-lg border border-border p-4">
+      <form aria-label="Decide approval request" className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
         <div className="flex flex-col gap-1">
           <label htmlFor="approvalRequestId" className="text-sm text-muted">
             Approval request ID
@@ -85,7 +88,7 @@ export default function ApprovalsPage() {
             value={approvalRequestId}
             onChange={(e) => setApprovalRequestId(e.target.value)}
             placeholder="Select a request above, or paste an ID"
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -97,44 +100,44 @@ export default function ApprovalsPage() {
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            className="rounded border border-border bg-transparent px-3 py-2"
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
         <div className="flex gap-3">
-          <button
+          <Button
             type="submit"
+            variant="primary"
             disabled={decide.isPending || !approvalRequestId}
             onClick={(e) => handleDecide('APPROVED', e)}
-            className="rounded bg-safe px-4 py-2 font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Approve
-          </button>
-          <button
+          </Button>
+          <Button
             type="submit"
+            variant="danger"
             disabled={decide.isPending || !approvalRequestId}
             onClick={(e) => handleDecide('REJECTED', e)}
-            className="rounded bg-danger px-4 py-2 font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reject
-          </button>
+          </Button>
         </div>
       </form>
 
       {decide.isError && (
-        <div role="alert" className="rounded border border-danger/40 bg-danger-bg px-3 py-2 text-sm text-danger">
+        <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
           {decide.error.message}
         </div>
       )}
 
       {decide.data && (
-        <div role="status" className="rounded border border-border p-4 text-sm">
+        <Card role="status" className="text-sm">
           <p>
             Status: <strong>{decide.data.status}</strong>
           </p>
           <p>Executed: {decide.data.executed ? 'yes' : 'no'}</p>
           {decide.data.rowCount !== null && <p>Rows affected: {decide.data.rowCount}</p>}
-          {decide.data.error && <p className="text-danger">Error: {decide.data.error}</p>}
-        </div>
+          {decide.data.error && <p className="text-critical">Error: {decide.data.error}</p>}
+        </Card>
       )}
     </div>
   )

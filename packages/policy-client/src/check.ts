@@ -122,6 +122,27 @@ export async function checkAuditLog(
     actor_id: resource.actorId,
   }, actions)
 }
+export async function filterReadableAuditLogs(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resources: AuditLogResourceAttrs[],
+): Promise<Set<string>> {
+  if (resources.length === 0) return new Set()
+
+  const result = await client.checkResources({
+    principal: buildPrincipal(principal),
+    resources: resources.map((r) => ({
+      resource: { kind: 'audit_log', id: r.id, attr: { org_id: r.orgId, actor_id: r.actorId } },
+      actions: ['read'],
+    })),
+  })
+
+  const readable = new Set<string>()
+  for (const r of resources) {
+    if (result.isAllowed({ resource: { kind: 'audit_log', id: r.id }, action: 'read' })) readable.add(r.id)
+  }
+  return readable
+}
 
 export async function checkDbTable(
   client: CerbosClient,
