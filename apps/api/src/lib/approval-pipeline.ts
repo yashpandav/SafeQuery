@@ -1,17 +1,20 @@
-import { eq, and } from 'drizzle-orm'
+import { eq, and, desc, inArray } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 import { approvalRequests, queryLogs, databaseConnections } from '@repo/db/schema'
 import type { DbClient } from '@repo/db'
 import type { CerbosClient, CerbosPrincipal } from '@repo/policy-client'
-import { checkApproval } from '@repo/policy-client'
+import { checkApproval, filterReadableApprovals } from '@repo/policy-client'
 import { writeAuditLog } from '@repo/audit'
 import { JOB_NAMES, type ConnectionTarget } from '@repo/queue'
-import type { PlatformRole } from '@repo/types'
+import type { PlatformRole, RiskLevel, ApprovalStatus, SimulationResult } from '@repo/types'
 import type { ExecutionQueueClient } from './query-pipeline'
 
-export interface ApprovalPipelineDeps {
+export interface ApprovalReadDeps {
   db: DbClient
   cerbosClient: CerbosClient
+}
+
+export interface ApprovalPipelineDeps extends ApprovalReadDeps {
   executionQueue: ExecutionQueueClient
 }
 
@@ -19,6 +22,61 @@ export interface ApprovalPrincipal {
   userId: string
   orgId: string
   platformRole: PlatformRole
+}
+
+export interface ApprovalListItem {
+  id: string
+  status: ApprovalStatus
+  createdAt: Date
+  expiresAt: Date
+  decidedAt: Date | null
+  decisionNote: string | null
+  simulationResult: SimulationResult | null
+  queryLogId: string
+  naturalLanguage: string
+  generatedSql: string
+  riskLevel: RiskLevel
+  submittedBy: string
+}
+
+export async function listApprovals(deps: ApprovalReadDeps, principal: ApprovalPrincipal): Promise<ApprovalListItem[]> {
+  const rows = await deps.db.query.approvalRequests.findMany({
+    where: eq(approvalRequests.orgId, principal.orgId),
+    orderBy: [desc(approvalRequests.createdAt)],
+  })
+  if (rows.length === 0) return []
+
+  const logs = await deps.db.query.queryLogs.findMany({
+    where: inArray(queryLogs.id, rows.map((r) => r.queryLogId)),
+  })
+  const logById = new Map(logs.map((l) => [l.id, l]))
+
+  const cerbosPrincipal: CerbosPrincipal = { userId: principal.userId, orgId: principal.orgId, platformRole: principal.platformRole }
+  const readable = await filterReadableApprovals(
+    deps.cerbosClient,
+    cerbosPrincipal,
+    rows.map((r) => ({ id: r.id, orgId: r.orgId, submittedBy: logById.get(r.queryLogId)?.userId ?? '', status: r.status })),
+  )
+
+  return rows
+    .filter((r) => readable.has(r.id))
+    .map((r) => {
+      const log = logById.get(r.queryLogId)
+      return {
+        id: r.id,
+        status: r.status,
+        createdAt: r.createdAt,
+        expiresAt: r.expiresAt,
+        decidedAt: r.decidedAt,
+        decisionNote: r.decisionNote,
+        simulationResult: r.simulationResult ?? null,
+        queryLogId: r.queryLogId,
+        naturalLanguage: log?.naturalLanguage ?? '',
+        generatedSql: log?.generatedSql ?? '',
+        riskLevel: log?.riskLevel ?? 'CRITICAL',
+        submittedBy: log?.userId ?? '',
+      }
+    })
 }
 
 export interface DecideApprovalInput {

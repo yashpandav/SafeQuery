@@ -18,6 +18,8 @@ export function createMockExecutionQueue(overrides: Partial<JobResultMap> = {}):
       truncated: false,
       maskedColumns: [],
       executionMs: 5,
+      plan: null,
+      estimatedRowCount: null,
     },
     [JOB_NAMES.EXECUTE_WRITE]: {
       success: true,

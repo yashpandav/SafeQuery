@@ -17,6 +17,7 @@ export const platformRoleEnum = pgEnum('platform_role', [
 
 export const queryStatusEnum = pgEnum('query_status', [
   'PENDING',
+  'AWAITING_ACKNOWLEDGMENT',
   'EXECUTING',
   'EXECUTED',
   'FAILED',

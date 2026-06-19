@@ -20,7 +20,7 @@ SafeQuery is an **Enterprise AI Database Governance Platform** — a control pla
 ```
 my-turborepo/
 ├── apps/
-│   ├── web/              # Next.js 16 — early stage, tRPC client wired to apps/api
+│   ├── web/              # Next.js 16 + Tailwind 4 — chat/approvals UI wired to apps/api ✅ BUILT
 │   ├── api/              # Express + tRPC — core API server ✅ BUILT
 │   ├── ai-service/       # Vercel AI SDK — SQL generation ✅ BUILT
 │   ├── tre-dispatcher/   # BullMQ worker process — routes jobs to tre-executor ✅ BUILT
@@ -245,15 +245,40 @@ only ever sees the result `apps/tre-executor` hands back.
 role's `allowedTables`/`allowedColumns` (SQ-026 schema filtering happens *here*, not in ai-service) →
 call `ai-service.ai.generate` (signs a fresh 5-minute PASETO v4.public token per call) → if ai-service
 already returned `SECURITY_INCIDENT`, skip sql-validator entirely (no SQL exists) → otherwise run
-`sql-validator.validateSql` → persist a `query_logs` row → branch on `riskLevel`:
-  - **SAFE/WARNING** → enqueue an `execute_read` job immediately, update `query_logs` to `EXECUTED`/`FAILED`
-    with the real `rowCount`/`executionMs`, return the masked rows to the caller in the same response.
+`sql-validator.validateSql` → persist a `query_logs` row (now also storing `maskedColumns` and `rowCap`,
+since a WARNING needs them again after the user acknowledges, not just at first execution) → branch on
+`riskLevel`:
+  - **SAFE** → enqueue an `execute_read` job immediately, update `query_logs` to `EXECUTED`/`FAILED` with
+    the real `rowCount`/`executionMs`, return the masked rows to the caller in the same response.
+  - **WARNING** → enqueue an `execute_read` job with `explainOnly: true` (SQ-038 — runs
+    `EXPLAIN (FORMAT JSON)` inside the same `BEGIN ... ROLLBACK` read-only transaction, no rows fetched,
+    just the planner's `Plan Rows` estimate), store it as `query_logs.simulationResult`, set
+    `query_logs.status = 'AWAITING_ACKNOWLEDGMENT'` — nothing executes yet. `result` is `null`,
+    `requiresAcknowledgment: true` tells the caller to call `query.acknowledge` next (SQ-037).
   - **CRITICAL** → enqueue an `execute_write` job with `dryRun: true` (the exact affected rows via
     `RETURNING * ... ROLLBACK`, nothing committed), store that as the `approval_requests.simulationResult`
     a reviewer will see, create the `approval_requests` row.
   - **SECURITY_INCIDENT** → persist straight to `FAILED`, nothing enqueued, no approval path.
 Audit entries: `QUERY_SUBMITTED` always; `QUERY_EXECUTED`/`QUERY_FAILED` after a read runs;
 `APPROVAL_REQUESTED` for CRITICAL; `SECURITY_INCIDENT_DETECTED` on rejection.
+
+**`query.acknowledge`** (`src/trpc/routers/query.ts`, `acknowledgeQuery()` in the same
+`query-pipeline.ts`) — the other half of SQ-037. Takes a `queryLogId`; CONFLICT unless its status is
+still `AWAITING_ACKNOWLEDGMENT`, FORBIDDEN unless the caller is the original submitter (self-service ack,
+not a reviewer decision — no Cerbos action for this, it's a continuation of the request the caller
+already had authorized, not a new authorization decision). On success: writes `QUERY_ACKNOWLEDGED` to
+the audit log, then re-enqueues the *same* validated SQL as a real (non-`explainOnly`) `execute_read`
+job using the `rowCap`/`maskedColumns` persisted on the `query_logs` row at submit time (so the
+re-execution honors exactly what was already validated, not a freshly-refetched value that could have
+drifted), and updates `query_logs` to `EXECUTED`/`FAILED` exactly like the SAFE path does.
+
+**`organization.list`** (`src/trpc/routers/organization.ts`, `listMyOrganizations()` in
+`src/lib/organization-pipeline.ts`) — `authedProcedure`, not `orgProcedure`: the caller doesn't have an
+org selected yet when they need this (it's how the web client lets them pick one). Joins
+`organization_members` (by `userId`) to `organizations` (by the resulting `orgId`s) and returns
+`{ id, name, slug, platformRole }` per org. No Cerbos check — unlike `query`/`approval_request`/
+`database_connection`, "which orgs am I a member of" isn't a resource-access decision Cerbos models;
+membership rows are the only source of truth, the same ones `orgProcedure` itself reads on every request.
 
 **`databaseConnection.create`/`.list`/`.captureSchema`** (`src/trpc/routers/database-connection.ts`,
 `src/lib/connection-pipeline.ts`) — SQ-019/020/021/022. `create` enqueues a `test_connection` job (which
@@ -264,6 +289,15 @@ password. `captureSchema` enqueues a `capture_schema` job and stores the resulti
 (with a regex PII heuristic — `apps/tre-executor`'s `buildSnapshot()`) as a new `schema_snapshots` row.
 Both Cerbos-gated via `checkDatabaseConnection` (`create`/`read` require `same_org_admin`).
 
+**`approval.list`** (`src/trpc/routers/approval.ts`, `listApprovals()` in `approval-pipeline.ts`) — lists
+every approval request in the caller's org, joins in the linked `query_logs` row (prompt/SQL/risk) so a
+UI doesn't need a second round trip per item, then filters to what Cerbos says the caller may `read` —
+**one batched `checkResources` call covering every row, not N** (`filterReadableApprovals()` in
+`packages/policy-client`). Reviewers/admins/owners see everything in the org (`same_org_approver`);
+analysts see only the requests they personally submitted (`request_submitter`) — both rules already
+existed in `approval_request.yaml`'s `read` action, this just calls them at list-time instead of only at
+decide-time.
+
 **`approval.decide`** (`src/trpc/routers/approval.ts`, `src/lib/approval-pipeline.ts`) — a Reviewer/Admin/Owner
 approves or rejects a `PENDING` `CRITICAL` approval request. Four-eyes (a submitter can't approve their
 own request) is enforced by Cerbos's DENY rule in `approval_request.yaml`, not re-implemented in app
@@ -272,11 +306,10 @@ enqueued. On **APPROVED**: enqueues the *same validated SQL* as an `execute_writ
 `dryRun: false` — no data is copied or merged from the earlier dry-run, this fresh run's `COMMIT` is the
 change reaching production (PROOF_OF_CONCEPT.md §12) — then updates `query_logs` to `EXECUTED`/`FAILED`.
 
-**Not yet built:** SQ-038's read-side `EXPLAIN` simulation (writes get a real dry-run; reads execute
-directly since SAFE/WARNING never need reviewer sign-off) and SQ-037's WARNING acknowledgment UI step
-(currently treated identically to SAFE — executes immediately, no ack).
+The WARNING acknowledgment step now has a `web` UI screen too (`apps/web/app/query-result.tsx`'s
+"Acknowledge & Run" button), not just Postman folder 4 — see the `apps/web` section below.
 
-21 unit tests (`pnpm --filter @repo/api test`, vitest) across 3 files cover all of the above — risk-level
+33 unit tests (`pnpm --filter @repo/api test`, vitest) across 4 files cover all of the above — risk-level
 branching, the guard clauses (FORBIDDEN/NOT_FOUND/PRECONDITION_FAILED/CONFLICT), schema filtering,
 four-eyes rejection, and that plaintext credentials never appear in anything persisted — using
 lightweight in-memory mocks for `db`/Cerbos/ai-service/the execution queue, never a real Postgres,
@@ -299,7 +332,11 @@ Postgres needed:
   prompt, not the security boundary; Cerbos's `maskedColumns` output is what's actually enforced).
 - **`handleExecuteRead`** — `BEGIN TRANSACTION READ ONLY`, `pg-cursor` fetches `rowCap + 1` rows (one
   extra to detect truncation without a separate `COUNT(*)`), `ROLLBACK` (nothing was ever going to
-  commit), masks the Cerbos-returned `maskedColumns` (`maskRow()`) before returning.
+  commit), masks the Cerbos-returned `maskedColumns` (`maskRow()`) before returning. When the job's
+  `explainOnly: true` (the WARNING path, SQ-038), it runs `EXPLAIN (FORMAT JSON) <sql>` instead of the
+  cursor fetch, still inside the same read-only transaction, then `ROLLBACK`s without ever materializing
+  a row — returns the planner's `Plan Rows` estimate (`estimatedRowCount`) and the raw plan JSON (`plan`)
+  for the caller to show the user before they decide whether to actually run it.
 - **`handleExecuteWrite`** — `BEGIN`, sets `statement_timeout`/`lock_timeout`, appends `RETURNING *` to
   the already-validated single-statement SQL, then `ROLLBACK` (`dryRun: true`, the simulation) or
   `COMMIT` (`dryRun: false`, only after approval).
@@ -345,6 +382,41 @@ Env vars: `OPENAI_API_KEY`, `AI_MODEL`, `AI_SCREEN_MODEL`, `SERVICE_PUBLIC_KEY` 
 38 unit tests (`pnpm --filter @repo/ai-service test`, vitest) cover sanitization, the heuristic injection
 corpus, schema-prompt rendering, and the full pipeline using `ai/test`'s `MockLanguageModelV3` — no real
 OpenAI calls in CI.
+
+### `apps/web`
+Next.js 16 App Router, calling `apps/api`'s tRPC router directly over `httpBatchLink` (no Next.js API
+route in between — `app/api/trpc/server.tsx` exists only for any future RSC-side tRPC calls, the browser
+client in `trpc/client.tsx` talks straight to `NEXT_PUBLIC_API_URL`). Styled with Tailwind CSS 4
+(`@theme` tokens in `app/globals.css` — semantic names like `--color-safe`/`--color-warning` map
+directly to the four risk levels, not raw hex in components).
+
+**Auth (`lib/session.tsx`)** — a `SessionProvider` persists `{ sessionToken, orgId, userId, email }` to
+`localStorage`; `getStoredSession()` is the non-React escape hatch the tRPC link's `headers()` callback
+uses (that callback runs per-request outside any component tree, so it can't call a hook). The login page
+(`app/login/page.tsx`) does the same Keycloak **direct password grant** Postman uses against
+`safequery-web`'s dev-only `directAccessGrantsEnabled: true` client, then calls `auth.exchangeToken` —
+explicitly documented in the UI as a dev shortcut, not the production OIDC redirect + PKCE flow. The
+session is stored with an empty `orgId` first (`organization.list` only needs `Authorization`, not
+`X-Org-Id`, so `authedProcedure` is enough — it doesn't gate on org membership the way `orgProcedure`
+does), then the login page calls the new `organization.list` endpoint and either auto-selects the single
+org or shows a picker — **no manually-pasted orgId anywhere**, including in Postman's "List Approvals"-style
+manual config; `organization.list` resolves live from `organization_members`, the same source of truth
+`orgProcedure` itself checks on every request.
+
+**Pages:**
+- `app/page.tsx` (Chat) — connection picker (`databaseConnection.list`) + natural-language textarea →
+  `query.submit`. `app/query-result.tsx` renders the response by `riskLevel`: SAFE/executed-WARNING show
+  a results table; pending-WARNING shows the EXPLAIN estimate + an "Acknowledge & Run" button wired to
+  `query.acknowledge`; CRITICAL shows the dry-run preview + a copyable `approvalRequestId`;
+  SECURITY_INCIDENT shows the rejection reason. `result`/`riskLevel`/etc. are typed via
+  `inferRouterOutputs<AppRouter>['query']['submit']` — no duplicated type definitions between `apps/api`
+  and `apps/web`.
+- `app/approvals/page.tsx` (Reviewer) — lists requests via `approval.list` (click one to select it, or
+  paste an ID manually) and Approve/Reject via `approval.decide`. Cerbos's four-eyes DENY rule still
+  applies — a submitter selecting their own request gets `FORBIDDEN`.
+
+Both protected pages redirect to `/login` client-side if `useSession()` has no session — there's no
+middleware-level route protection yet (P2/P3 concern once `apps/web` needs SSR-authenticated routes).
 
 ---
 
@@ -400,14 +472,15 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 | Phase | Focus | Status |
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
-| P1 | **The Differentiator** | ✅ **Core loop COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify. Remaining: SQ-037 WARNING ack UI, SQ-038 read-side EXPLAIN simulation, no live DB migrated yet in this dev environment |
+| P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
 | P2 | Governance | 🔲 Multi-tenancy UI, custom-roles CRUD UI, multiple DB connections UI, environments CRUD |
 | P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
 
-**What "core loop complete" means concretely:** `query.submit` now actually executes — a SAFE/WARNING
-query returns real (masked) rows in the same response; a CRITICAL query gets a real dry-run simulation
+**What "P1 complete" means concretely:** `query.submit` now actually executes — a SAFE query returns
+real (masked) rows in the same response; a WARNING query gets a real `EXPLAIN`-based simulation and
+waits for `query.acknowledge` before it actually runs; a CRITICAL query gets a real dry-run simulation
 and creates an approval request; `approval.decide` re-runs and commits the exact validated SQL on
 approval. `databaseConnection.create`/`.captureSchema` give the pipeline real connections and real
 schema snapshots to work with, instead of requiring hand-seeded fixtures. None of this required
@@ -417,10 +490,11 @@ schema snapshots to work with, instead of requiring hand-seeded fixtures. None o
 
 **What's still simplified vs. the canonical spec, by design, for P1:** `apps/tre-executor` is a plain
 TypeScript module `apps/tre-dispatcher` calls in-process — not yet its own `worker_threads`/container
-boundary (Phase 3). Reads execute directly with no separate `EXPLAIN`-based simulation step (only writes
-get a dry-run, since only CRITICAL needs reviewer sign-off). WARNING is currently treated identically to
-SAFE (auto-executes, no acknowledgment prompt — SQ-037, needs a UI that doesn't exist yet). See
-`Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042 (everything done except SQ-037/SQ-038).
+boundary (Phase 3). `apps/web` now has a chat UI (analyst), a real reviewer queue (`approval.list`), and
+live org selection (`organization.list`) covering all four risk paths end-to-end with nothing
+manually-pasted — but auth is still the dev-only Keycloak direct grant rather than the full OIDC redirect
++ PKCE flow the canonical spec describes. See `Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042
+— all done.
 
 ---
 

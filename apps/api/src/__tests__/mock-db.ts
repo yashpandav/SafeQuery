@@ -7,6 +7,10 @@ export interface MockDbFixtures {
   schemaSnapshots?: unknown
   approvalRequests?: unknown
   queryLogs?: unknown
+  approvalRequestsList?: unknown[]
+  queryLogsList?: unknown[]
+  organizationMembersList?: unknown[]
+  organizationsList?: unknown[]
 }
 
 export function createMockDb(fixtures: MockDbFixtures) {
@@ -56,13 +60,14 @@ export function createMockDb(fixtures: MockDbFixtures) {
 
   interface MockDb {
     query: {
-      organizationMembers: { findFirst: () => Promise<unknown> }
+      organizationMembers: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
+      organizations: { findMany: () => Promise<unknown[]> }
       customRoles: { findFirst: () => Promise<unknown> }
       databaseConnections: { findFirst: () => Promise<unknown> }
       environments: { findFirst: () => Promise<unknown> }
       schemaSnapshots: { findFirst: () => Promise<unknown> }
-      approvalRequests: { findFirst: () => Promise<unknown> }
-      queryLogs: { findFirst: () => Promise<unknown> }
+      approvalRequests: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
+      queryLogs: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
     }
     select: () => ReturnType<typeof chainableSelect>
     insert: (table: unknown) => ReturnType<typeof chainableInsert>
@@ -72,13 +77,25 @@ export function createMockDb(fixtures: MockDbFixtures) {
 
   const db: MockDb = {
     query: {
-      organizationMembers: { findFirst: async () => fixtures.organizationMembers ?? null },
+      organizationMembers: {
+        findFirst: async () => fixtures.organizationMembers ?? null,
+        findMany: async () => fixtures.organizationMembersList ?? [],
+      },
+      organizations: {
+        findMany: async () => fixtures.organizationsList ?? [],
+      },
       customRoles: { findFirst: async () => fixtures.customRoles ?? null },
       databaseConnections: { findFirst: async () => fixtures.databaseConnections ?? null },
       environments: { findFirst: async () => fixtures.environments ?? null },
       schemaSnapshots: { findFirst: async () => fixtures.schemaSnapshots ?? null },
-      approvalRequests: { findFirst: async () => fixtures.approvalRequests ?? null },
-      queryLogs: { findFirst: async () => fixtures.queryLogs ?? null },
+      approvalRequests: {
+        findFirst: async () => fixtures.approvalRequests ?? null,
+        findMany: async () => fixtures.approvalRequestsList ?? [],
+      },
+      queryLogs: {
+        findFirst: async () => fixtures.queryLogs ?? null,
+        findMany: async () => fixtures.queryLogsList ?? [],
+      },
     },
     select: () => chainableSelect(),
     insert: (table: unknown) => chainableInsert(table),

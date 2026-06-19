@@ -50,6 +50,7 @@ export interface ExecuteReadJobData {
   sql: string
   rowCap: number | null
   maskedColumns: string[]
+  explainOnly?: boolean
 }
 export interface ExecuteReadJobResult {
   success: boolean
@@ -60,6 +61,8 @@ export interface ExecuteReadJobResult {
   truncated: boolean
   maskedColumns: string[]
   executionMs: number
+  plan: string | null
+  estimatedRowCount: number | null
 }
 export interface ExecuteWriteJobData {
   type: typeof JOB_NAMES.EXECUTE_WRITE

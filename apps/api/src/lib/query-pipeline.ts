@@ -36,11 +36,14 @@ export interface ExecutionQueueClient {
   run: <T extends ExecutionJobData>(data: T) => Promise<JobResultMap[T['type']]>
 }
 
-export interface QueryPipelineDeps {
+export interface ExecutionPipelineDeps {
   db: DbClient
   cerbosClient: CerbosClient
-  aiService: AiServiceClient
   executionQueue: ExecutionQueueClient
+}
+
+export interface QueryPipelineDeps extends ExecutionPipelineDeps {
+  aiService: AiServiceClient
 }
 
 export interface SubmitQueryPrincipal {
@@ -69,10 +72,15 @@ export interface SubmitQueryResult {
   rewrittenSql: string | null
   explanation: string
   requiresApproval: boolean
+  requiresAcknowledgment: boolean
   approvalRequestId: string | null
   violations: { code: string; severity: 'error' | 'warning'; message: string }[]
   result: QueryExecutionResult | null
   simulation: SimulationResult | null
+}
+
+export interface AcknowledgeQueryInput {
+  queryLogId: string
 }
 function filterSchemaForRole(
   snapshot: Record<string, ColumnDefinition[]>,
@@ -183,6 +191,8 @@ export async function submitQuery(
       riskLevel: validated.riskLevel,
       riskReason,
       status: 'PENDING',
+      maskedColumns: validated.maskedColumns,
+      rowCap: customRole.config.rowCap,
     })
     .returning()
   if (!queryLog) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
@@ -199,8 +209,9 @@ export async function submitQuery(
   let approvalRequestId: string | null = null
   let executionResult: QueryExecutionResult | null = null
   let simulation: SimulationResult | null = null
+  let requiresAcknowledgment = false
 
-  if (validated.riskLevel === 'SAFE' || validated.riskLevel === 'WARNING') {
+  if (validated.riskLevel === 'SAFE') {
     const jobResult = await deps.executionQueue.run({
       type: JOB_NAMES.EXECUTE_READ,
       connection: target,
@@ -243,6 +254,41 @@ export async function submitQuery(
         metadata: { error: jobResult.error },
       })
     }
+  } else if (validated.riskLevel === 'WARNING') {
+    const explainJob = await deps.executionQueue.run({
+      type: JOB_NAMES.EXECUTE_READ,
+      connection: target,
+      sql,
+      rowCap: customRole.config.rowCap,
+      maskedColumns: validated.maskedColumns,
+      explainOnly: true,
+    })
+    if (explainJob.success) {
+      simulation = {
+        type: 'explain',
+        plan: explainJob.plan ?? undefined,
+        estimatedRowCount: explainJob.estimatedRowCount,
+        executionMs: explainJob.executionMs,
+      }
+      requiresAcknowledgment = true
+      await deps.db
+        .update(queryLogs)
+        .set({ status: 'AWAITING_ACKNOWLEDGMENT', simulationResult: simulation })
+        .where(eq(queryLogs.id, queryLog.id))
+    } else {
+      await deps.db
+        .update(queryLogs)
+        .set({ status: 'FAILED', errorMessage: explainJob.error })
+        .where(eq(queryLogs.id, queryLog.id))
+      await writeAuditLog(deps.db, {
+        orgId: principal.orgId,
+        actorId: principal.userId,
+        action: 'QUERY_FAILED',
+        resourceType: 'query_log',
+        resourceId: queryLog.id,
+        metadata: { error: explainJob.error },
+      })
+    }
   } else if (validated.riskLevel === 'CRITICAL') {
     const dryRun = await deps.executionQueue.run({ type: JOB_NAMES.EXECUTE_WRITE, connection: target, sql, dryRun: true })
     if (dryRun.success) {
@@ -278,10 +324,107 @@ export async function submitQuery(
     rewrittenSql: validated.rewrittenSql,
     explanation: generated.explanation,
     requiresApproval: validated.requiresApproval,
+    requiresAcknowledgment,
     approvalRequestId,
     violations: validated.violations,
     result: executionResult,
     simulation,
+  }
+}
+
+export async function acknowledgeQuery(
+  deps: ExecutionPipelineDeps,
+  principal: SubmitQueryPrincipal,
+  input: AcknowledgeQueryInput,
+): Promise<SubmitQueryResult> {
+  const queryLog = await deps.db.query.queryLogs.findFirst({
+    where: and(eq(queryLogs.id, input.queryLogId), eq(queryLogs.orgId, principal.orgId)),
+  })
+  if (!queryLog) throw new TRPCError({ code: 'NOT_FOUND', message: 'Query log not found' })
+  if (queryLog.userId !== principal.userId) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Only the submitter can acknowledge this query' })
+  }
+  if (queryLog.status !== 'AWAITING_ACKNOWLEDGMENT') {
+    throw new TRPCError({ code: 'CONFLICT', message: `Query is not awaiting acknowledgment (status: ${queryLog.status})` })
+  }
+
+  const connection = await deps.db.query.databaseConnections.findFirst({
+    where: and(eq(databaseConnections.id, queryLog.connectionId), eq(databaseConnections.orgId, principal.orgId)),
+  })
+  if (!connection) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Connection no longer exists' })
+
+  await writeAuditLog(deps.db, {
+    orgId: principal.orgId,
+    actorId: principal.userId,
+    action: 'QUERY_ACKNOWLEDGED',
+    resourceType: 'query_log',
+    resourceId: queryLog.id,
+    metadata: {},
+  })
+
+  const target: ConnectionTarget = {
+    host: connection.host,
+    port: connection.port,
+    database: connection.database,
+    ssl: connection.ssl,
+    encryptedCredentials: connection.encryptedCredentials,
+  }
+  const jobResult = await deps.executionQueue.run({
+    type: JOB_NAMES.EXECUTE_READ,
+    connection: target,
+    sql: queryLog.generatedSql,
+    rowCap: queryLog.rowCap,
+    maskedColumns: queryLog.maskedColumns,
+  })
+
+  let executionResult: QueryExecutionResult | null = null
+  if (jobResult.success) {
+    executionResult = {
+      columns: jobResult.columns,
+      rows: jobResult.rows,
+      rowCount: jobResult.rowCount,
+      truncated: jobResult.truncated,
+      maskedColumns: jobResult.maskedColumns,
+      executionMs: jobResult.executionMs,
+    }
+    await deps.db
+      .update(queryLogs)
+      .set({ status: 'EXECUTED', rowCount: jobResult.rowCount, executionMs: jobResult.executionMs, executedAt: new Date() })
+      .where(eq(queryLogs.id, queryLog.id))
+    await writeAuditLog(deps.db, {
+      orgId: principal.orgId,
+      actorId: principal.userId,
+      action: 'QUERY_EXECUTED',
+      resourceType: 'query_log',
+      resourceId: queryLog.id,
+      metadata: { rowCount: jobResult.rowCount },
+    })
+  } else {
+    await deps.db
+      .update(queryLogs)
+      .set({ status: 'FAILED', errorMessage: jobResult.error })
+      .where(eq(queryLogs.id, queryLog.id))
+    await writeAuditLog(deps.db, {
+      orgId: principal.orgId,
+      actorId: principal.userId,
+      action: 'QUERY_FAILED',
+      resourceType: 'query_log',
+      resourceId: queryLog.id,
+      metadata: { error: jobResult.error },
+    })
+  }
+
+  return {
+    queryLogId: queryLog.id,
+    riskLevel: queryLog.riskLevel,
+    rewrittenSql: queryLog.generatedSql,
+    explanation: '',
+    requiresApproval: false,
+    requiresAcknowledgment: false,
+    approvalRequestId: null,
+    violations: [],
+    result: executionResult,
+    simulation: queryLog.simulationResult ?? null,
   }
 }
 
@@ -331,6 +474,7 @@ async function persistRejected(
     rewrittenSql: null,
     explanation: '',
     requiresApproval: false,
+    requiresAcknowledgment: false,
     approvalRequestId: null,
     violations: [{ code: 'REJECTED', severity: 'error', message: reason }],
     result: null,

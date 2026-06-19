@@ -48,6 +48,7 @@ export type SubmitQuery = z.infer<typeof SubmitQuerySchema>
 export const SimulationResultSchema = z.object({
   type: z.enum(['explain', 'dry_run']),
   plan: z.string().optional(),
+  estimatedRowCount: z.number().int().nullable().optional(),
   affectedRows: z.number().int().optional(),
   previewRows: z.array(z.record(z.string(), z.unknown())).optional(),
   executionMs: z.number().int(),

@@ -78,6 +78,27 @@ export async function checkApproval(
     status: resource.status,
   }, actions)
 }
+export async function filterReadableApprovals(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resources: ApprovalResourceAttrs[],
+): Promise<Set<string>> {
+  if (resources.length === 0) return new Set()
+
+  const result = await client.checkResources({
+    principal: buildPrincipal(principal),
+    resources: resources.map((r) => ({
+      resource: { kind: 'approval_request', id: r.id, attr: { org_id: r.orgId, submitted_by: r.submittedBy, status: r.status } },
+      actions: ['read'],
+    })),
+  })
+
+  const readable = new Set<string>()
+  for (const r of resources) {
+    if (result.isAllowed({ resource: { kind: 'approval_request', id: r.id }, action: 'read' })) readable.add(r.id)
+  }
+  return readable
+}
 
 export async function checkDatabaseConnection(
   client: CerbosClient,

@@ -24,6 +24,9 @@ export const queryLogs = pgTable('query_logs', {
   rowCount: integer('row_count'),
   errorMessage: text('error_message'),
   executionMs: integer('execution_ms'),
+  maskedColumns: jsonb('masked_columns').$type<string[]>().notNull().default([]),
+  rowCap: integer('row_cap'),
+  simulationResult: jsonb('simulation_result').$type<SimulationResult>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   executedAt: timestamp('executed_at', { withTimezone: true }),
 }).enableRLS()

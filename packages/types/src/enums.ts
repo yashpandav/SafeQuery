@@ -6,7 +6,7 @@ export type RiskLevel = z.infer<typeof RiskLevel>
 export const PlatformRole = z.enum(['owner', 'admin', 'reviewer', 'analyst', 'viewer'])
 export type PlatformRole = z.infer<typeof PlatformRole>
 
-export const QueryStatus = z.enum(['PENDING', 'EXECUTING', 'EXECUTED', 'FAILED', 'CANCELLED'])
+export const QueryStatus = z.enum(['PENDING', 'AWAITING_ACKNOWLEDGMENT', 'EXECUTING', 'EXECUTED', 'FAILED', 'CANCELLED'])
 export type QueryStatus = z.infer<typeof QueryStatus>
 
 export const ApprovalStatus = z.enum(['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'])
@@ -23,6 +23,7 @@ export const AuditAction = z.enum([
   'QUERY_EXECUTED',
   'QUERY_FAILED',
   'QUERY_CANCELLED',
+  'QUERY_ACKNOWLEDGED',
   'APPROVAL_REQUESTED',
   'APPROVAL_APPROVED',
   'APPROVAL_REJECTED',

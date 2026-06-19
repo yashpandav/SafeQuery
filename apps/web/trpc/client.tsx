@@ -7,6 +7,7 @@ import { createTRPCContext } from '@trpc/tanstack-react-query'
 import { useState } from 'react'
 import type { AppRouter } from '@repo/api/router'
 import { makeQueryClient } from './query-client'
+import { getStoredSession } from '../lib/session'
 
 export const { TRPCProvider, useTRPC } = createTRPCContext<AppRouter>()
 
@@ -27,7 +28,16 @@ export function TRPCReactProvider({ children }: Readonly<{ children: React.React
 
   const [trpcClient] = useState(() =>
     createTRPCClient<AppRouter>({
-      links: [httpBatchLink({ url: getApiUrl() })],
+      links: [
+        httpBatchLink({
+          url: getApiUrl(),
+          headers() {
+            const session = getStoredSession()
+            if (!session) return {}
+            return { Authorization: `Bearer ${session.sessionToken}`, 'X-Org-Id': session.orgId }
+          },
+        }),
+      ],
     }),
   )
 

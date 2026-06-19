@@ -8,6 +8,13 @@
       "when": 1781695556691,
       "tag": "0000_dazzling_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781843519891,
+      "tag": "0001_striped_darkhawk",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { approvalRequests, queryLogs, auditLogs } from '@repo/db/schema'
 import { JOB_NAMES } from '@repo/queue'
-import { decideApproval, type ApprovalPrincipal } from '../lib/approval-pipeline'
+import { decideApproval, listApprovals, type ApprovalPrincipal } from '../lib/approval-pipeline'
 import { createMockDb, type MockDbFixtures } from './mock-db'
 import { createMockExecutionQueue } from './mock-execution-queue'
 import { createAllowAllCerbosClient } from './mock-cerbos-allow-all'
@@ -16,7 +16,30 @@ const QUERY_LOG_ID = 'query-1'
 const CONNECTION_ID = 'conn-1'
 
 const reviewer: ApprovalPrincipal = { userId: REVIEWER_ID, orgId: ORG_ID, platformRole: 'reviewer' }
+const submitter: ApprovalPrincipal = { userId: SUBMITTER_ID, orgId: ORG_ID, platformRole: 'analyst' }
 const submitterAsReviewer: ApprovalPrincipal = { userId: SUBMITTER_ID, orgId: ORG_ID, platformRole: 'reviewer' }
+
+function createSubmitterOnlyCerbosClient(): CerbosClient {
+  return {
+    async checkResources(req: CheckResourcesRequest) {
+      const results = req.resources.map(({ resource, actions }) => {
+        const isOwnRequest = resource.attr?.['submitted_by'] === req.principal.id
+        const actionsMap: Record<string, boolean> = {}
+        for (const action of actions) actionsMap[action] = isOwnRequest
+        return { resourceId: resource.id, isAllowed: (action: string) => actionsMap[action] ?? false }
+      })
+      return {
+        isAllowed({ resource, action }: { resource: { kind: string; id: string }; action: string }) {
+          return results.find((r) => r.resourceId === resource.id)?.isAllowed(action)
+        },
+        findResult(resource: { kind: string; id: string }): CerbosCheckResourceResult | undefined {
+          const match = results.find((r) => r.resourceId === resource.id)
+          return match ? { outputs: [] } : undefined
+        },
+      }
+    },
+  }
+}
 
 function baseFixtures(): MockDbFixtures {
   return {
@@ -25,9 +48,6 @@ function baseFixtures(): MockDbFixtures {
     databaseConnections: { id: CONNECTION_ID, orgId: ORG_ID, host: 'localhost', port: 5432, database: 'demo', ssl: false, encryptedCredentials: 'envelope' },
   }
 }
-// Denies approve/reject specifically when submitted_by === principal.id —
-// mirrors approval_request.yaml's four-eyes DENY rule, which is the one
-// piece of real Cerbos logic this pipeline depends on beyond org matching.
 function createFourEyesCerbosClient(orgId: string): CerbosClient {
   return {
     async checkResources(req: CheckResourcesRequest) {
@@ -140,5 +160,47 @@ describe('decideApproval', () => {
         { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+})
+
+describe('listApprovals', () => {
+  function listFixtures(): MockDbFixtures {
+    return {
+      approvalRequestsList: [{ id: APPROVAL_ID, orgId: ORG_ID, queryLogId: QUERY_LOG_ID, status: 'PENDING', expiresAt: new Date(), createdAt: new Date() }],
+      queryLogsList: [
+        { id: QUERY_LOG_ID, orgId: ORG_ID, userId: SUBMITTER_ID, naturalLanguage: 'delete inactive customers', generatedSql: 'DELETE FROM customers WHERE id = 1', riskLevel: 'CRITICAL' },
+      ],
+    }
+  }
+
+  it('reviewer: sees the request with the linked query_log details joined in', async () => {
+    const { db } = createMockDb(listFixtures())
+    const result = await listApprovals({ db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) }, reviewer)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      id: APPROVAL_ID,
+      status: 'PENDING',
+      naturalLanguage: 'delete inactive customers',
+      generatedSql: 'DELETE FROM customers WHERE id = 1',
+      riskLevel: 'CRITICAL',
+      submittedBy: SUBMITTER_ID,
+    })
+  })
+
+  it('analyst: only sees requests they submitted, per request_submitter', async () => {
+    const { db } = createMockDb(listFixtures())
+    const result = await listApprovals({ db: db as never, cerbosClient: createSubmitterOnlyCerbosClient() }, submitter)
+    expect(result).toHaveLength(1)
+
+    const otherAnalyst: ApprovalPrincipal = { userId: 'someone-else', orgId: ORG_ID, platformRole: 'analyst' }
+    const hiddenFromOthers = await listApprovals({ db: db as never, cerbosClient: createSubmitterOnlyCerbosClient() }, otherAnalyst)
+    expect(hiddenFromOthers).toHaveLength(0)
+  })
+
+  it('returns an empty list when there are no approval requests in the org', async () => {
+    const { db } = createMockDb({})
+    const result = await listApprovals({ db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) }, reviewer)
+    expect(result).toEqual([])
   })
 })

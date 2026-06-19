@@ -90,3 +90,31 @@ describe('handleExecuteRead', () => {
     expect(result.error).toContain('timeout')
   })
 })
+
+describe('handleExecuteRead — explainOnly', () => {
+  it('runs EXPLAIN instead of reading rows, and returns the estimated row count', async () => {
+    const { client, queries } = createFakeClient({
+      onQuery: (sql) =>
+        sql.startsWith('EXPLAIN')
+          ? { rows: [{ 'QUERY PLAN': [{ Plan: { 'Node Type': 'Seq Scan', 'Plan Rows': 42 } }] }] }
+          : undefined,
+    })
+    const result = await handleExecuteRead(baseJob({ explainOnly: true }), () => client, fakeCursorFactory([]))
+
+    expect(result.success).toBe(true)
+    expect(result.rowCount).toBe(0)
+    expect(result.rows).toEqual([])
+    expect(result.estimatedRowCount).toBe(42)
+    expect(result.plan).toContain('Seq Scan')
+    expect(queries.some((q) => q.startsWith('EXPLAIN'))).toBe(true)
+    expect(queries).toContain('ROLLBACK')
+  })
+
+  it('returns a null plan when EXPLAIN yields no rows', async () => {
+    const { client } = createFakeClient()
+    const result = await handleExecuteRead(baseJob({ explainOnly: true }), () => client, fakeCursorFactory([]))
+    expect(result.success).toBe(true)
+    expect(result.plan).toBeNull()
+    expect(result.estimatedRowCount).toBeNull()
+  })
+})

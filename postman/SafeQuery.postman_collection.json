@@ -141,6 +141,30 @@
             "header": [{ "key": "Authorization", "value": "Bearer {{analystSessionToken}}" }],
             "url": { "raw": "{{baseUrl}}/trpc/auth.me", "host": ["{{baseUrl}}"], "path": ["trpc", "auth.me"] }
           }
+        },
+        {
+          "name": "List My Organizations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{analystSessionToken}}" }],
+            "url": { "raw": "{{baseUrl}}/trpc/organization.list", "host": ["{{baseUrl}}"], "path": ["trpc", "organization.list"] },
+            "description": "authedProcedure, not orgProcedure — no X-Org-Id header needed (the caller doesn't have one selected yet). This is how the web login page discovers orgId live instead of it being pasted in; running it here lets you copy the printed id into this environment instead of pulling it from `db:seed`'s console output."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const orgs = (json.result && json.result.data) || [];",
+                  "if (orgs.length > 0) {",
+                  "  pm.environment.set('orgId', orgs[0].id);",
+                  "  console.log('orgs visible to this user:', orgs.map((o) => `${o.name} (${o.platformRole})`).join(', '));",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -354,7 +378,34 @@
               "raw": "{\n  \"connectionId\": \"{{connectionIdDev}}\",\n  \"naturalLanguage\": \"List every order ever placed, no limit\"\n}"
             },
             "url": { "raw": "{{baseUrl}}/trpc/query.submit", "host": ["{{baseUrl}}"], "path": ["trpc", "query.submit"] },
-            "description": "Expect riskLevel: WARNING (missing LIMIT) — still executes immediately, no approval step (SQ-037's acknowledgment UI isn't built yet)."
+            "description": "Expect riskLevel: WARNING (missing LIMIT). Does NOT execute yet — status is AWAITING_ACKNOWLEDGMENT, requiresAcknowledgment: true, result: null, and simulation.type: 'explain' with the EXPLAIN plan's estimated row count. Send 'Acknowledge WARNING Query' next to actually run it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.result && json.result.data && json.result.data.queryLogId) {",
+                  "  pm.environment.set('warningQueryLogId', json.result.data.queryLogId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge WARNING Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{analystSessionToken}}" },
+              { "key": "X-Org-Id", "value": "{{orgId}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"queryLogId\": \"{{warningQueryLogId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/trpc/query.acknowledge", "host": ["{{baseUrl}}"], "path": ["trpc", "query.acknowledge"] },
+            "description": "Only the original submitter can acknowledge (FORBIDDEN otherwise); only valid while status is AWAITING_ACKNOWLEDGMENT (CONFLICT otherwise). Runs the real read job and returns the masked rows."
           }
         },
         {
@@ -431,6 +482,18 @@
         }
       ],
       "item": [
+        {
+          "name": "List Approvals (as Reviewer — sees all in org)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{reviewerSessionToken}}" },
+              { "key": "X-Org-Id", "value": "{{orgId}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/trpc/approval.list", "host": ["{{baseUrl}}"], "path": ["trpc", "approval.list"] },
+            "description": "Reviewers see every approval request in the org (Cerbos's same_org_approver rule); analysts calling this only see requests they personally submitted (request_submitter). Each item includes the joined query_logs prompt/SQL/risk so a UI doesn't need a second round trip."
+          }
+        },
         {
           "name": "Decide Approval — APPROVE",
           "request": {

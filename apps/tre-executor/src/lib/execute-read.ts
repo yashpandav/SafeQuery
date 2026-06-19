@@ -36,6 +36,24 @@ export async function handleExecuteRead(
     await client.query('BEGIN TRANSACTION READ ONLY')
     await client.query(`SET LOCAL statement_timeout = ${env.STATEMENT_TIMEOUT_MS}`)
 
+    if (data.explainOnly) {
+      const explainResult = await client.query(`EXPLAIN (FORMAT JSON) ${data.sql}`)
+      await client.query('ROLLBACK')
+      const plan = extractPlanRoot(explainResult.rows[0])
+      return {
+        success: true,
+        error: null,
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        truncated: false,
+        maskedColumns: data.maskedColumns,
+        executionMs: Date.now() - start,
+        plan: plan ? JSON.stringify(plan) : null,
+        estimatedRowCount: typeof plan?.['Plan Rows'] === 'number' ? plan['Plan Rows'] : null,
+      }
+    }
+
     const cursor = cursorFactory(client, data.sql)
     const rows = await cursor.read(rowCap + 1)
     await cursor.close()
@@ -55,6 +73,8 @@ export async function handleExecuteRead(
       truncated,
       maskedColumns: data.maskedColumns,
       executionMs: Date.now() - start,
+      plan: null,
+      estimatedRowCount: null,
     }
   } catch (err) {
     return {
@@ -66,8 +86,17 @@ export async function handleExecuteRead(
       truncated: false,
       maskedColumns: data.maskedColumns,
       executionMs: Date.now() - start,
+      plan: null,
+      estimatedRowCount: null,
     }
   } finally {
     await client.end().catch(() => {})
   }
+}
+
+function extractPlanRoot(explainRow: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  const queryPlan = explainRow?.['QUERY PLAN']
+  if (!Array.isArray(queryPlan)) return null
+  const entry = queryPlan[0] as { Plan?: Record<string, unknown> } | undefined
+  return entry?.Plan ?? null
 }
