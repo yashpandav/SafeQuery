@@ -72,5 +72,6 @@ export const CustomRoleConfigSchema = z.object({
   allowedActions: z.array(AllowedAction),
   rowFilters: z.record(z.string(), z.string()),
   rowCap: z.number().int().positive().nullable(),
+  maskPii: z.boolean().optional(),
 })
 export type CustomRoleConfig = z.infer<typeof CustomRoleConfigSchema>

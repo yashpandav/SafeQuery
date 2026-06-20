@@ -28,7 +28,9 @@ export function createMockCerbosClient(orgId: string, customRole: CustomRoleConf
           const allowed = orgMatches && tableInScope && Boolean(capabilityMap[action])
           actionsMap[action] = allowed
           if (allowed) {
-            outputs.push({ value: { rowFilter: customRole.rowFilters[resource.id] ?? null, maskedColumns: [] } })
+
+            const maskedColumns = req.principal.attr?.['masked_columns']
+            outputs.push({ value: { rowFilter: customRole.rowFilters[resource.id] ?? null, maskedColumns: Array.isArray(maskedColumns) ? maskedColumns : [] } })
           }
         }
 

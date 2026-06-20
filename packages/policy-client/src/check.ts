@@ -7,11 +7,17 @@ import type {
   AuditLogResourceAttrs,
   DbTableResourceAttrs,
   DbTablePrincipalAttrs,
+  CustomRoleResourceAttrs,
+  EnvironmentResourceAttrs,
+  DashboardResourceAttrs,
   QueryAction,
   ApprovalAction,
   DatabaseConnectionAction,
   AuditLogAction,
   DbTableAction,
+  CustomRoleAction,
+  EnvironmentAction,
+  DashboardAction,
   DecisionMap,
   DbTableDecision,
 } from './types'
@@ -142,6 +148,39 @@ export async function filterReadableAuditLogs(
     if (result.isAllowed({ resource: { kind: 'audit_log', id: r.id }, action: 'read' })) readable.add(r.id)
   }
   return readable
+}
+
+export async function checkCustomRole(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resource: CustomRoleResourceAttrs,
+  actions: CustomRoleAction[],
+): Promise<DecisionMap<CustomRoleAction>> {
+  return check(client, principal, 'custom_role', resource.id, {
+    org_id: resource.orgId,
+  }, actions)
+}
+
+export async function checkEnvironment(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resource: EnvironmentResourceAttrs,
+  actions: EnvironmentAction[],
+): Promise<DecisionMap<EnvironmentAction>> {
+  return check(client, principal, 'environment', resource.id, {
+    org_id: resource.orgId,
+  }, actions)
+}
+
+export async function checkDashboard(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resource: DashboardResourceAttrs,
+  actions: DashboardAction[],
+): Promise<DecisionMap<DashboardAction>> {
+  return check(client, principal, 'dashboard', 'workspace', {
+    org_id: resource.orgId,
+  }, actions)
 }
 
 export async function checkDbTable(

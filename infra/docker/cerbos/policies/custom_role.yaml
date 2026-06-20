@@ -1,0 +1,14 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "custom_role"
+  importDerivedRoles:
+    - common_roles
+
+  rules:
+    # ── Only admins and owners can manage custom roles — "dev"/"marketing"/"analytics" capability
+    #    sets are org-admin-defined data, not a Cerbos-modeled concept ──
+    - actions: ["create", "read", "update", "delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]

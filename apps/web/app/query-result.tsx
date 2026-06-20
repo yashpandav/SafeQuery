@@ -5,6 +5,7 @@ import type { AppRouter } from '@repo/api/router'
 import { Badge, type RiskTone } from './components/badge'
 import { Button } from './components/button'
 import { Card } from './components/card'
+import { CodeBlock } from './components/code-block'
 
 type RouterOutputs = inferRouterOutputs<AppRouter>
 export type SubmitResult = RouterOutputs['query']['submit']
@@ -20,14 +21,6 @@ const RISK_TONE: Record<SubmitResult['riskLevel'], RiskTone> = {
   WARNING: 'warning',
   CRITICAL: 'critical',
   SECURITY_INCIDENT: 'incident',
-}
-
-function CodeBlock({ children }: { children: React.ReactNode }) {
-  return (
-    <pre className="mt-3 overflow-x-auto rounded-lg bg-code-bg p-3 text-xs whitespace-pre-wrap text-code-fg">
-      <code>{children}</code>
-    </pre>
-  )
 }
 
 function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }) {
@@ -74,7 +67,7 @@ export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResul
         {result.explanation && <span className="text-sm text-muted">{result.explanation}</span>}
       </div>
 
-      {result.rewrittenSql && <CodeBlock>{result.rewrittenSql}</CodeBlock>}
+      {result.rewrittenSql && <CodeBlock className="mt-3">{result.rewrittenSql}</CodeBlock>}
 
       {result.violations.length > 0 && (
         <ul className="mt-3 list-disc pl-5 text-sm text-muted">
@@ -98,7 +91,7 @@ export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResul
       {result.riskLevel === 'CRITICAL' && result.requiresApproval && (
         <div className="mt-3">
           <p className="text-sm text-muted">Awaiting reviewer approval. Request ID:</p>
-          <CodeBlock>{result.approvalRequestId}</CodeBlock>
+          <CodeBlock className="mt-1">{result.approvalRequestId}</CodeBlock>
           {result.simulation && (
             <>
               <p className="mt-2 text-sm text-muted">

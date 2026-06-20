@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto'
+import { customRoles, environments, queryLogs, approvalRequests } from '@repo/db/schema'
+
 export interface MockDbFixtures {
   organizationMembers?: unknown
   customRoles?: unknown
@@ -13,11 +15,14 @@ export interface MockDbFixtures {
   organizationsList?: unknown[]
   auditLogsList?: unknown[]
   usersList?: unknown[]
+  customRolesList?: unknown[]
+  environmentsList?: unknown[]
 }
 
 export function createMockDb(fixtures: MockDbFixtures) {
   const insertedByTable = new Map<unknown, Record<string, unknown>[]>()
   const updatedByTable = new Map<unknown, Record<string, unknown>[]>()
+  const deletedByTable = new Map<unknown, unknown[]>()
 
   function chainableSelect() {
     const builder = {
@@ -44,18 +49,55 @@ export function createMockDb(fixtures: MockDbFixtures) {
     }
     return builder
   }
+
+  // Falls back to the relevant findFirst-style fixture when a test calls update() without first
+  // having inserted a row for this table (e.g. update-after-findFirst, as opposed to the
+  // insert-then-update pattern the rest of this mock was originally built around).
+  function fallbackRowFor(table: unknown): Record<string, unknown> | undefined {
+    if (table === customRoles) return fixtures.customRoles as Record<string, unknown> | undefined
+    if (table === environments) return fixtures.environments as Record<string, unknown> | undefined
+    if (table === queryLogs) return fixtures.queryLogs as Record<string, unknown> | undefined
+    if (table === approvalRequests) return fixtures.approvalRequests as Record<string, unknown> | undefined
+    return undefined
+  }
+
   function chainableUpdate(table: unknown) {
     const builder = {
       set: (data: Record<string, unknown>) => {
         const list = insertedByTable.get(table)
         const last = list?.[list.length - 1]
-        if (last) Object.assign(last, data)
+        if (last) {
+          Object.assign(last, data)
+        } else {
+          const base = fallbackRowFor(table)
+          if (base) {
+            const seeded = insertedByTable.get(table) ?? []
+            seeded.push({ ...base, ...data })
+            insertedByTable.set(table, seeded)
+          }
+        }
         const updates = updatedByTable.get(table) ?? []
         updates.push(data)
         updatedByTable.set(table, updates)
         return builder
       },
-      where: () => Promise.resolve(),
+      where: () => whereResult,
+    }
+    const whereResult = {
+      returning: () => Promise.resolve(insertedByTable.get(table)?.slice(-1) ?? []),
+      then: (resolve: (value: undefined) => void) => resolve(undefined),
+    }
+    return builder
+  }
+
+  function chainableDelete(table: unknown) {
+    const builder = {
+      where: () => {
+        const list = deletedByTable.get(table) ?? []
+        list.push({})
+        deletedByTable.set(table, list)
+        return Promise.resolve()
+      },
     }
     return builder
   }
@@ -64,9 +106,9 @@ export function createMockDb(fixtures: MockDbFixtures) {
     query: {
       organizationMembers: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       organizations: { findMany: () => Promise<unknown[]> }
-      customRoles: { findFirst: () => Promise<unknown> }
+      customRoles: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       databaseConnections: { findFirst: () => Promise<unknown> }
-      environments: { findFirst: () => Promise<unknown> }
+      environments: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       schemaSnapshots: { findFirst: () => Promise<unknown> }
       approvalRequests: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       queryLogs: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
@@ -76,6 +118,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
     select: () => ReturnType<typeof chainableSelect>
     insert: (table: unknown) => ReturnType<typeof chainableInsert>
     update: (table: unknown) => ReturnType<typeof chainableUpdate>
+    delete: (table: unknown) => ReturnType<typeof chainableDelete>
     transaction: <T>(cb: (tx: MockDb) => Promise<T>) => Promise<T>
   }
 
@@ -88,9 +131,15 @@ export function createMockDb(fixtures: MockDbFixtures) {
       organizations: {
         findMany: async () => fixtures.organizationsList ?? [],
       },
-      customRoles: { findFirst: async () => fixtures.customRoles ?? null },
+      customRoles: {
+        findFirst: async () => fixtures.customRoles ?? null,
+        findMany: async () => fixtures.customRolesList ?? [],
+      },
       databaseConnections: { findFirst: async () => fixtures.databaseConnections ?? null },
-      environments: { findFirst: async () => fixtures.environments ?? null },
+      environments: {
+        findFirst: async () => fixtures.environments ?? null,
+        findMany: async () => fixtures.environmentsList ?? [],
+      },
       schemaSnapshots: { findFirst: async () => fixtures.schemaSnapshots ?? null },
       approvalRequests: {
         findFirst: async () => fixtures.approvalRequests ?? null,
@@ -106,8 +155,9 @@ export function createMockDb(fixtures: MockDbFixtures) {
     select: () => chainableSelect(),
     insert: (table: unknown) => chainableInsert(table),
     update: (table: unknown) => chainableUpdate(table),
+    delete: (table: unknown) => chainableDelete(table),
     transaction: async (cb) => cb(db),
   }
 
-  return { db, insertedByTable, updatedByTable }
+  return { db, insertedByTable, updatedByTable, deletedByTable }
 }

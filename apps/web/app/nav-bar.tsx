@@ -14,6 +14,8 @@ export function NavBar() {
     router.push('/login')
   }
 
+  const isAdmin = session?.platformRole === 'admin' || session?.platformRole === 'owner'
+
   return (
     <nav className="flex items-center justify-between border-b border-border bg-surface px-6 py-3" aria-label="Main navigation">
       <Link href="/" className="text-base font-bold">
@@ -30,6 +32,11 @@ export function NavBar() {
           <Link href="/audit-log" className="hover:underline">
             Audit log
           </Link>
+          {isAdmin && (
+            <Link href="/admin" className="hover:underline">
+              Admin
+            </Link>
+          )}
           <span className="text-muted">{session.email}</span>
           <Button variant="secondary" onClick={handleLogout}>
             Log out

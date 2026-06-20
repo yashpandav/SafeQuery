@@ -1,6 +1,6 @@
 import { checkDbTable } from '@repo/policy-client'
 import type { CerbosClient, CerbosPrincipal, DbTableAction } from '@repo/policy-client'
-import type { CustomRoleConfig, AllowedAction } from '@repo/types'
+import type { CustomRoleConfig, AllowedAction, ColumnDefinition } from '@repo/types'
 import { parseStatement } from './parse'
 import { validateStatementType, detectForbiddenTables, detectComments } from './forbidden'
 import { detectUnauthorizedColumns } from './columns'
@@ -15,6 +15,11 @@ export interface ValidateSqlInput {
   principal: CerbosPrincipal
   customRole: CustomRoleConfig
   environment: EnvironmentType
+  schemaSnapshot?: Record<string, ColumnDefinition[]>
+}
+
+function piiColumnsFor(schemaSnapshot: Record<string, ColumnDefinition[]>, table: string): string[] {
+  return (schemaSnapshot[table] ?? []).filter((c) => c.isPii).map((c) => c.column)
 }
 
 const ACTION_TO_DB_TABLE_ACTION: Record<AllowedAction, DbTableAction> = {
@@ -69,6 +74,8 @@ export async function validateSql(input: ValidateSqlInput): Promise<ValidatorOut
   if (violations.some((v) => v.severity === 'error')) return fail(violations)
 
   const tableAuthorizations: { table: string; rowFilter: string | null; maskedColumns: string[] }[] = []
+  const schemaSnapshot = input.schemaSnapshot ?? {}
+  const maskPii = input.customRole.maskPii !== false
 
   for (const table of tables) {
     const decision = await checkDbTable(
@@ -78,7 +85,7 @@ export async function validateSql(input: ValidateSqlInput): Promise<ValidatorOut
         tableScope: input.customRole.allowedTables,
         capabilities: input.customRole.allowedActions.map((a) => ACTION_TO_DB_TABLE_ACTION[a]),
         rowFilter: input.customRole.rowFilters[table] ?? null,
-        maskedColumns: [],
+        maskedColumns: maskPii ? piiColumnsFor(schemaSnapshot, table) : [],
       },
       { table, orgId: input.principal.orgId },
       [statementType],

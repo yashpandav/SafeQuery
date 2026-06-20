@@ -16,6 +16,12 @@ export const CreateEnvironmentSchema = z.object({
 })
 export type CreateEnvironment = z.infer<typeof CreateEnvironmentSchema>
 
+export const UpdateEnvironmentTypeSchema = z.object({
+  environmentId: z.string().uuid(),
+  type: EnvironmentType,
+})
+export type UpdateEnvironmentType = z.infer<typeof UpdateEnvironmentTypeSchema>
+
 export const DatabaseConnectionSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),

@@ -163,6 +163,7 @@ export async function submitQuery(
     principal: cerbosPrincipal,
     customRole: customRole.config,
     environment: environment.type,
+    schemaSnapshot: filteredSchema,
   })
 
   if (!validated.valid) {

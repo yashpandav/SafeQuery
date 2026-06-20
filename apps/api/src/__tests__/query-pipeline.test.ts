@@ -85,6 +85,74 @@ describe('submitQuery', () => {
     expect(insertedByTable.get(approvalRequests)).toBeUndefined()
   })
 
+  it('SAFE: PII columns in the schema snapshot are passed through to the execute_read job as maskedColumns (SQ-052)', async () => {
+    const fixtures = baseFixtures(readOnlyRole)
+    fixtures.schemaSnapshots = {
+      connectionId: CONNECTION_ID,
+      snapshot: {
+        customers: [
+          { column: 'id', type: 'uuid', nullable: false, isPii: false },
+          { column: 'email', type: 'text', nullable: false, isPii: true },
+        ],
+      },
+      capturedAt: new Date(),
+    }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue, calls } = createMockExecutionQueue()
+    await submitQuery(
+      {
+        db: db as never,
+        cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole),
+        aiService: aiServiceReturning({
+          sql: 'SELECT id, email FROM customers LIMIT 10',
+          explanation: 'Lists customer emails',
+          riskLevel: 'SAFE',
+          riskReason: 'Bounded read',
+          affectedTables: ['customers'],
+          isWrite: false,
+          estimatedRowCount: 10,
+        }),
+        executionQueue,
+      },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer emails' },
+    )
+
+    expect(calls[0]).toMatchObject({ type: JOB_NAMES.EXECUTE_READ, maskedColumns: ['email'] })
+  })
+
+  it('SAFE: a custom role with maskPii: false sees PII columns unmasked', async () => {
+    const unmaskedRole: CustomRoleConfig = { ...readOnlyRole, maskPii: false }
+    const fixtures = baseFixtures(unmaskedRole)
+    fixtures.schemaSnapshots = {
+      connectionId: CONNECTION_ID,
+      snapshot: { customers: [{ column: 'email', type: 'text', nullable: false, isPii: true }] },
+      capturedAt: new Date(),
+    }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue, calls } = createMockExecutionQueue()
+    await submitQuery(
+      {
+        db: db as never,
+        cerbosClient: createMockCerbosClient(ORG_ID, unmaskedRole),
+        aiService: aiServiceReturning({
+          sql: 'SELECT email FROM customers LIMIT 10',
+          explanation: '',
+          riskLevel: 'SAFE',
+          riskReason: '',
+          affectedTables: ['customers'],
+          isWrite: false,
+          estimatedRowCount: 10,
+        }),
+        executionQueue,
+      },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer emails' },
+    )
+
+    expect(calls[0]).toMatchObject({ type: JOB_NAMES.EXECUTE_READ, maskedColumns: [] })
+  })
+
   it('SAFE: a failed execution job persists FAILED with the error message', async () => {
     const { db, updatedByTable, insertedByTable } = createMockDb(baseFixtures(readOnlyRole))
     const { client: executionQueue } = createMockExecutionQueue({

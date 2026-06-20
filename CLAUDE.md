@@ -188,19 +188,44 @@ this was a modernization, not a bug fix.
 Hash-chain audit log writer and integrity verifier.
 Key exports: `writeAuditLog(db, entry)`, `verifyIntegrity(db, orgId)`.
 Writer uses `db.transaction()` + `SELECT FOR UPDATE` to serialize concurrent writes.
+8 unit tests (`pnpm --filter @repo/audit test`, vitest, added after the package had none) against a
+hand-rolled fake `DbClient` (`src/__tests__/fake-db.ts`) that actually chains inserts in order rather
+than a stub that always returns empty — cover first-entry genesis hashing, prevHash chaining across
+multiple writes, and `verifyIntegrity` both passing on an untouched chain built through real
+`writeAuditLog` calls and correctly identifying the first mismatched row after directly mutating a
+row's `metadata` or `hash` (simulating a raw SQL UPDATE against `audit_logs`).
 
 ### `packages/sql-validator`
 AST-based validation of AI-generated SQL (Postgres dialect, via `node-sql-parser`). Never trusts the
 raw SQL string to execute — always returns the AST-rewritten version.
-Key export: `validateSql({ sql, cerbosClient, principal, customRole, environment })` → `ValidatorOutput`.
-Pipeline: parse (paranoid single-statement enforcement) → comment/forbidden-statement-type/system-table
-checks → local column-restriction check → per-table Cerbos `checkDbTable` authorization → row-filter
-injection (AST-level, never string-concatenated) → structural warnings (missing LIMIT, excessive joins,
-unfiltered destructive write) → risk classification (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT).
-Any error-severity violation (parse failure, multi-statement, forbidden table, unauthorized table/column,
-invalid row filter) is always SECURITY_INCIDENT — there is no approval path for those, unlike CRITICAL.
-65 adversarial unit tests (`pnpm --filter @repo/sql-validator test`, vitest) cover injection corpora,
-statement smuggling via row-filter strings, cross-tenant access, and privilege escalation attempts.
+Key export: `validateSql({ sql, cerbosClient, principal, customRole, environment, schemaSnapshot })` →
+`ValidatorOutput`. Pipeline: parse (paranoid single-statement enforcement) → comment/forbidden-statement-
+type/system-table checks → local column-restriction check → per-table Cerbos `checkDbTable`
+authorization → row-filter injection (AST-level, never string-concatenated) → structural warnings
+(missing LIMIT, excessive joins, unfiltered destructive write) → risk classification
+(SAFE/WARNING/CRITICAL/SECURITY_INCIDENT). Any error-severity violation (parse failure, multi-statement,
+forbidden table, unauthorized table/column, invalid row filter) is always SECURITY_INCIDENT — there is
+no approval path for those, unlike CRITICAL.
+
+**PII masking (SQ-052) — fixed a real bug, not a new feature.** `checkDbTable`'s `maskedColumns`
+*principal* attribute (what Cerbos echoes back as its decision output) was hardcoded to `[]` for every
+single query, regardless of any column's `isPii` flag — `apps/tre-executor`'s `maskRow()`, the
+`db_table.yaml` echo, and the UI's "masked: X" label were all fully wired and tested, but the one input
+that actually mattered was always empty, so **no column was ever masked in this codebase before this
+fix**. Fixed by computing the real PII column list per table from the optional `schemaSnapshot` param
+(the same role-filtered schema already sent to `ai-service`, so the same data the model saw is what
+masking acts on) and gating it on the new `CustomRoleConfig.maskPii` field (optional, undefined/true =
+masked, only explicit `false` opts out — "Mask PII columns by default" in the admin UI). The exact same
+hardcoded-`[]` bug existed independently in **two test mocks**
+(`packages/sql-validator/src/__tests__/test-helpers.ts` and `apps/api/src/__tests__/mock-cerbos.ts`) —
+both claimed to "replicate `db_table.yaml`'s decision logic exactly" but had silently drifted from it;
+fixed both to actually echo back `principal.attr.masked_columns`, which is what let new tests catch this
+at all.
+
+69 adversarial unit tests (`pnpm --filter @repo/sql-validator test`, vitest) cover injection corpora,
+statement smuggling via row-filter strings, cross-tenant access, privilege escalation attempts, and the
+PII-masking behavior above (masks by default, respects `maskPii: false`, never masks non-PII columns,
+masks nothing when no schema snapshot is supplied).
 
 ### `packages/secrets`
 Two-layer AES-256-GCM envelope encryption (PROOF_OF_CONCEPT.md §7): a random per-secret data key (DEK)
@@ -245,7 +270,9 @@ only ever sees the result `apps/tre-executor` hands back.
 role's `allowedTables`/`allowedColumns` (SQ-026 schema filtering happens *here*, not in ai-service) →
 call `ai-service.ai.generate` (signs a fresh 5-minute PASETO v4.public token per call) → if ai-service
 already returned `SECURITY_INCIDENT`, skip sql-validator entirely (no SQL exists) → otherwise run
-`sql-validator.validateSql` → persist a `query_logs` row (now also storing `maskedColumns` and `rowCap`,
+`sql-validator.validateSql` (passing that *same* `filteredSchema` as its `schemaSnapshot` param, so PII
+masking acts on exactly the columns the model was told about — see SQ-052 in the `sql-validator`
+section above) → persist a `query_logs` row (now also storing `maskedColumns` and `rowCap`,
 since a WARNING needs them again after the user acknowledges, not just at first execution) → branch on
 `riskLevel`:
   - **SAFE** → enqueue an `execute_read` job immediately, update `query_logs` to `EXECUTED`/`FAILED` with
@@ -309,11 +336,54 @@ change reaching production (PROOF_OF_CONCEPT.md §12) — then updates `query_lo
 The WARNING acknowledgment step now has a `web` UI screen too (`apps/web/app/query-result.tsx`'s
 "Acknowledge & Run" button), not just Postman folder 4 — see the `apps/web` section below.
 
-33 unit tests (`pnpm --filter @repo/api test`, vitest) across 4 files cover all of the above — risk-level
+**`audit.list`/`audit.verifyIntegrity`** (`src/trpc/routers/audit.ts`, `src/lib/audit-pipeline.ts`) —
+SQ-058's backend half. `list` fetches the org's most recent 200 `audit_logs` rows, joins in the actor's
+name/email so the UI doesn't need a second round trip per row, then filters through Cerbos with the
+same batched-`checkResources` pattern as `approval.list` (`filterReadableAuditLogs()` in
+`packages/policy-client`) — admins/owners/reviewers see the whole org's trail (`same_org_admin`/
+`same_org_approver`), everyone else only sees entries where they're the recorded actor (`log_actor`),
+per `audit_log.yaml`. `verifyIntegrity` is a stricter gate: `audit_log.yaml` restricts the
+`verify_integrity` action to `same_org_admin` only (not `same_org_approver`/`log_actor` — recomputing
+the whole chain reveals whether *other people's* entries were tampered with), and on success just
+calls straight through to `packages/audit`'s `verifyIntegrity(db, orgId)`, returning whichever row (if
+any) was the first hash mismatch.
+
+**`customRole.list`/`.create`/`.update`/`.delete`** (`src/trpc/routers/custom-role.ts`,
+`src/lib/custom-role-pipeline.ts`) — SQ-017, the literal "custom roles as data" architecture decision
+made operable from the UI instead of requiring a seed script. All four actions are `same_org_admin`-only
+(`custom_role.yaml`); `list` joins in a live per-role `memberCount` computed from
+`organization_members` (not stored/cached on the role row — always current). `delete` relies on the
+schema's `custom_role_id` FK `ON DELETE SET NULL`: members assigned to a deleted role simply lose
+`query.submit` capability rather than the delete being blocked or cascading.
+
+**`environment.list`/`.updateType`** (`src/trpc/routers/environment.ts`,
+`src/lib/environment-pipeline.ts`) — SQ-018. `list` returns each environment with a **`posture`
+string describing what the risk engine actually does today** for that `type`
+(`packages/sql-validator/src/risk.ts`'s real branching — production writes are always CRITICAL,
+everything else is WARNING unless unfiltered-destructive), not aspirational policy copy. `updateType`
+is the one real "Configure" lever this exposes: changing an environment's `development`/`staging`/
+`production` classification immediately changes how the risk engine classifies every future write
+against it, since `risk.ts` reads that field directly — there's no separate policy-posture schema to
+keep in sync.
+
+**`dashboard.summary`** (`src/trpc/routers/dashboard.ts`, `src/lib/dashboard-pipeline.ts`) — the
+workspace-settings stat cards (queries today by risk level, pending-approval count + average wait,
+security incidents in the last 30 days, audit-chain status). Every number is a live aggregate computed
+in application code from `query_logs`/`approval_requests`/`audit_logs` (`Array.filter`/`reduce` after
+`findMany`, matching this codebase's existing style of app-level rather than SQL-level aggregation) —
+none of it is cached or precomputed. Gated by its own `dashboard.yaml` Cerbos policy
+(`same_org_admin`, action `read`) rather than reusing `audit_log.yaml`'s `verify_integrity` action,
+even though it also calls `packages/audit`'s `verifyIntegrity()` directly — the dashboard's own
+`dashboard:read` check already establishes the caller is an org admin, so asking Cerbos the same
+question twice under two different resource names would just be redundant.
+
+58 unit tests (`pnpm --filter @repo/api test`, vitest) across 8 files cover all of the above — risk-level
 branching, the guard clauses (FORBIDDEN/NOT_FOUND/PRECONDITION_FAILED/CONFLICT), schema filtering,
 four-eyes rejection, and that plaintext credentials never appear in anything persisted — using
 lightweight in-memory mocks for `db`/Cerbos/ai-service/the execution queue, never a real Postgres,
-Redis, or network call.
+Redis, or network call. The mock `db`'s update-then-`.returning()` chain (`apps/api/src/__tests__/mock-db.ts`)
+falls back to the relevant `findFirst` fixture when a test does find-then-update rather than
+insert-then-update, so `customRole.update`/`environment.updateType` didn't need a parallel mock.
 
 ### `apps/tre-executor`
 **The only component in this entire codebase allowed to touch a customer database**, and the only one
@@ -386,9 +456,19 @@ OpenAI calls in CI.
 ### `apps/web`
 Next.js 16 App Router, calling `apps/api`'s tRPC router directly over `httpBatchLink` (no Next.js API
 route in between — `app/api/trpc/server.tsx` exists only for any future RSC-side tRPC calls, the browser
-client in `trpc/client.tsx` talks straight to `NEXT_PUBLIC_API_URL`). Styled with Tailwind CSS 4
-(`@theme` tokens in `app/globals.css` — semantic names like `--color-safe`/`--color-warning` map
-directly to the four risk levels, not raw hex in components).
+client in `trpc/client.tsx` talks straight to `NEXT_PUBLIC_API_URL`).
+
+**Design system** — follows `Docs/Design/Design.md`'s near-monochrome language exactly: warm charcoal
+ink (`#111210`) for actions/headings, cool gray surfaces, and color reserved for risk signals only
+(badge + dot + soft tint — never a full card background or border). Tailwind CSS 4 `@theme` tokens in
+`app/globals.css` (`--color-safe`/`--color-warning`/`--color-critical`/`--color-incident`/`--color-neutral`,
+plus a fixed `--color-code-bg`/`--color-code-fg` pair for the one deliberate dark surface in the system —
+SQL code chips). No dark-mode variant — the design reference is light-only, so one was never built rather
+than half-built. Four shared components in `app/components/` (`Badge`, `Button`, `Card`, `CodeBlock`) are
+the only place these tokens get composed into classNames; pages import them rather than repeating
+Tailwind strings. `SECURITY_INCIDENT` maps to the **incident** (blue) tone, not **critical** (red) — a
+deliberate choice carried over from the design doc: red stays reserved for CRITICAL/destructive ops
+awaiting a decision, so it stays the loudest, least-ambiguous signal in the system.
 
 **Auth (`lib/session.tsx`)** — a `SessionProvider` persists `{ sessionToken, orgId, userId, email }` to
 `localStorage`; `getStoredSession()` is the non-React escape hatch the tRPC link's `headers()` callback
@@ -414,9 +494,45 @@ manual config; `organization.list` resolves live from `organization_members`, th
 - `app/approvals/page.tsx` (Reviewer) — lists requests via `approval.list` (click one to select it, or
   paste an ID manually) and Approve/Reject via `approval.decide`. Cerbos's four-eyes DENY rule still
   applies — a submitter selecting their own request gets `FORBIDDEN`.
+- `app/audit-log/page.tsx` — `audit.list` rendered as a TIME/EVENT/RISK/HASH table (action names
+  humanized from `SCREAMING_SNAKE_CASE` rather than a hand-maintained lookup table, so new
+  `AuditAction` values render correctly with zero changes here); the RISK column only shows a badge
+  when the row actually carries a `riskLevel` in its metadata or is a `SECURITY_INCIDENT_DETECTED`
+  entry — no risk is invented for action types that don't have one (e.g. `POLICY_UPDATED`). "Re-verify
+  chain" calls `audit.verifyIntegrity`; if it comes back invalid, the one row matching
+  `firstMismatchId` gets a red background and a "Tampered" badge — the rest of the table stays exactly
+  as monochrome as before, which is what makes that one row read as a genuine alarm.
 
-Both protected pages redirect to `/login` client-side if `useSession()` has no session — there's no
+- `app/admin/page.tsx` (Admin/Owner only — redirects everyone else to `/`) — workspace-settings
+  dashboard matching `Docs/Design/image-4.png`: `dashboard.summary`'s 4 stat cards, a custom-roles
+  table (`customRole.list`) with an inline create form and a per-row inline edit form
+  (`app/admin/role-form.tsx`, reused for both — same component, prefilled vs. empty initial values),
+  and an environment policy posture table (`environment.list`) where the type dropdown calls
+  `environment.updateType` directly — no separate "save" step. `Session` now carries `platformRole`
+  (set from the selected org's membership row at login) so the nav bar and this page's own redirect
+  guard can both gate on it client-side, in addition to the real enforcement happening server-side via
+  `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`'s Cerbos checks.
+- `app/audit-log/page.tsx` — `audit.list` rendered as a TIME/EVENT/RISK/HASH table (action names
+  humanized from `SCREAMING_SNAKE_CASE` rather than a hand-maintained lookup table, so new
+  `AuditAction` values render correctly with zero changes here); the RISK column only shows a badge
+  when the row actually carries a `riskLevel` in its metadata or is a `SECURITY_INCIDENT_DETECTED`
+  entry — no risk is invented for action types that don't have one (e.g. `POLICY_UPDATED`). "Re-verify
+  chain" calls `audit.verifyIntegrity`; if it comes back invalid, the one row matching
+  `firstMismatchId` gets a red background and a "Tampered" badge — the rest of the table stays exactly
+  as monochrome as before, which is what makes that one row read as a genuine alarm.
+
+All four protected pages redirect to `/login` client-side if `useSession()` has no session — there's no
 middleware-level route protection yet (P2/P3 concern once `apps/web` needs SSR-authenticated routes).
+
+**A real bug caught during browser verification, worth remembering**: tRPC's `httpBatchLink` batches
+every `useQuery` that fires in the same tick into one combined request
+(`/trpc/dashboard.summary,customRole.list,environment.list?batch=1...`). A Playwright mock registered
+for just `**/trpc/dashboard.summary**` will still match that combined URL (it's a substring), silently
+intercepting all three calls and returning a 1-item array where 3 were expected — symptoms looked like
+a missing-data bug in `app/admin/page.tsx` (the environment table rendered empty) when the actual app
+code was correct the whole time. Any future Playwright verification of a page with multiple sibling
+`useQuery` calls needs one route mock that returns a properly-ordered, properly-sized array, not one
+mock per procedure name.
 
 ---
 
@@ -473,7 +589,7 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
 | P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
-| P2 | Governance | 🔲 Multi-tenancy UI, custom-roles CRUD UI, multiple DB connections UI, environments CRUD |
+| P2 | Governance | ✅ Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD (SQ-018), PII column masking (SQ-052, was a long-standing no-op until this fix) all done — `apps/web/app/admin` + `apps/web/app/audit-log`. Still 🔲: multi-tenancy UI, multiple DB connections UI, time-window policies |
 | P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
@@ -490,11 +606,14 @@ schema snapshots to work with, instead of requiring hand-seeded fixtures. None o
 
 **What's still simplified vs. the canonical spec, by design, for P1:** `apps/tre-executor` is a plain
 TypeScript module `apps/tre-dispatcher` calls in-process — not yet its own `worker_threads`/container
-boundary (Phase 3). `apps/web` now has a chat UI (analyst), a real reviewer queue (`approval.list`), and
-live org selection (`organization.list`) covering all four risk paths end-to-end with nothing
-manually-pasted — but auth is still the dev-only Keycloak direct grant rather than the full OIDC redirect
-+ PKCE flow the canonical spec describes. See `Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042
-— all done.
+boundary (Phase 3). `apps/web` now has a chat UI (analyst), a real reviewer queue (`approval.list`),
+live org selection (`organization.list`), an audit log viewer with tamper detection
+(`audit.list`/`audit.verifyIntegrity`), and an admin workspace-settings dashboard with live custom-roles
+CRUD and environment policy posture (`customRole.*`/`environment.*`/`dashboard.summary`) — covering all
+four risk paths end-to-end with nothing manually-pasted — but auth is still the dev-only Keycloak direct
+grant rather than the full OIDC redirect + PKCE flow the canonical spec describes. See
+`Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042 — all done (SQ-017/SQ-018/SQ-058 from P2 also
+done, ahead of their phase).
 
 ---
 

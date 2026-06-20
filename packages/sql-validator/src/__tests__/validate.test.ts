@@ -86,6 +86,64 @@ describe('validateSql — golden paths', () => {
   })
 })
 
+describe('validateSql — PII masking (SQ-052)', () => {
+  const schemaSnapshot = {
+    customers: [
+      { column: 'id', type: 'uuid', nullable: false, isPii: false },
+      { column: 'email', type: 'text', nullable: false, isPii: true },
+      { column: 'ssn', type: 'text', nullable: true, isPii: true },
+    ],
+  }
+
+  it('masks every isPii column on the queried table by default', async () => {
+    const result = await validateSql({
+      sql: 'SELECT id, email, ssn FROM customers LIMIT 10',
+      cerbosClient: createMockCerbosClient(ORG_ID, READ_ONLY_ROLE),
+      principal,
+      customRole: READ_ONLY_ROLE,
+      environment: 'development',
+      schemaSnapshot,
+    })
+    expect(result.maskedColumns.sort()).toEqual(['email', 'ssn'])
+  })
+
+  it('masks nothing when the role sets maskPii: false', async () => {
+    const role = { ...READ_ONLY_ROLE, maskPii: false }
+    const result = await validateSql({
+      sql: 'SELECT id, email, ssn FROM customers LIMIT 10',
+      cerbosClient: createMockCerbosClient(ORG_ID, role),
+      principal,
+      customRole: role,
+      environment: 'development',
+      schemaSnapshot,
+    })
+    expect(result.maskedColumns).toEqual([])
+  })
+
+  it('masks nothing when no schema snapshot is supplied (no PII data to act on)', async () => {
+    const result = await validateSql({
+      sql: 'SELECT id, email, ssn FROM customers LIMIT 10',
+      cerbosClient: createMockCerbosClient(ORG_ID, READ_ONLY_ROLE),
+      principal,
+      customRole: READ_ONLY_ROLE,
+      environment: 'development',
+    })
+    expect(result.maskedColumns).toEqual([])
+  })
+
+  it('never masks a non-PII column', async () => {
+    const result = await validateSql({
+      sql: 'SELECT id FROM customers LIMIT 10',
+      cerbosClient: createMockCerbosClient(ORG_ID, READ_ONLY_ROLE),
+      principal,
+      customRole: READ_ONLY_ROLE,
+      environment: 'development',
+      schemaSnapshot,
+    })
+    expect(result.maskedColumns).not.toContain('id')
+  })
+})
+
 describe('validateSql — adversarial corpus (must always reject as SECURITY_INCIDENT)', () => {
   const blockComment = ['/', '*', ' sneaky ', '*', '/'].join('')
   const cases: Array<{ name: string; sql: string }> = [

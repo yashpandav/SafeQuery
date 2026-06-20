@@ -8,6 +8,7 @@ import { useSession } from '../../lib/session'
 import { Badge, type RiskTone } from '../components/badge'
 import { Button } from '../components/button'
 import { Card } from '../components/card'
+import { CodeBlock } from '../components/code-block'
 
 const STATUS_TONE: Record<string, RiskTone> = {
   PENDING: 'warning',
@@ -70,7 +71,7 @@ export default function ApprovalsPage() {
               <span className="font-medium">{a.naturalLanguage}</span>
               <Badge tone={STATUS_TONE[a.status] ?? 'neutral'}>{a.status}</Badge>
             </div>
-            <code className="mt-1 block text-xs text-muted">{a.generatedSql}</code>
+            <CodeBlock className="mt-2">{a.generatedSql}</CodeBlock>
           </button>
         ))}
       </div>

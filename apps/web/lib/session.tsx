@@ -7,6 +7,7 @@ export interface Session {
   orgId: string
   userId: string
   email: string
+  platformRole: string
 }
 
 interface SessionContextValue {
@@ -27,8 +28,6 @@ function readStoredSession(): Session | null {
     return null
   }
 }
-
-/** Read outside React (e.g. from the tRPC link's `headers()` callback, which runs per-request). */
 export function getStoredSession(): Session | null {
   return readStoredSession()
 }

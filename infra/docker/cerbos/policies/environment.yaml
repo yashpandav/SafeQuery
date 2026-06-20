@@ -1,0 +1,15 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "environment"
+  importDerivedRoles:
+    - common_roles
+
+  rules:
+    # ── Only admins and owners manage environment classification (dev/staging/production) — this
+    #    is the attribute the risk engine and db_table policy both key off of, so changing it is an
+    #    admin-level action, not a per-query decision ──
+    - actions: ["create", "read", "update", "delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]

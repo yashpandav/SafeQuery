@@ -1,0 +1,14 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "dashboard"
+  importDerivedRoles:
+    - common_roles
+
+  rules:
+    # ── The org-wide workspace summary (query/approval/incident counts) is an admin view, not a
+    #    per-resource decision — same_org_admin only, matching custom_role.yaml/environment.yaml ──
+    - actions: ["read"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]

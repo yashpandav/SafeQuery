@@ -38,6 +38,20 @@ export interface DbTableResourceAttrs {
   orgId: string
 }
 
+export interface CustomRoleResourceAttrs {
+  id: string
+  orgId: string
+}
+
+export interface EnvironmentResourceAttrs {
+  id: string
+  orgId: string
+}
+
+export interface DashboardResourceAttrs {
+  orgId: string
+}
+
 export interface DbTablePrincipalAttrs {
   tableScope: string[]
   capabilities: DbTableAction[]
@@ -66,6 +80,12 @@ export type DatabaseConnectionAction =
 export type AuditLogAction = 'read' | 'verify_integrity' | 'delete' | 'update'
 
 export type DbTableAction = 'select' | 'insert' | 'update' | 'delete'
+
+export type CustomRoleAction = 'create' | 'read' | 'update' | 'delete'
+
+export type EnvironmentAction = 'create' | 'read' | 'update' | 'delete'
+
+export type DashboardAction = 'read'
 
 export type DecisionMap<T extends string> = Record<T, boolean>
 

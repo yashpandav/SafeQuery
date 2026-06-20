@@ -361,7 +361,7 @@
               "raw": "{\n  \"connectionId\": \"{{connectionIdDev}}\",\n  \"naturalLanguage\": \"Show me all active customers\"\n}"
             },
             "url": { "raw": "{{baseUrl}}/trpc/query.submit", "host": ["{{baseUrl}}"], "path": ["trpc", "query.submit"] },
-            "description": "Expect riskLevel: SAFE, requiresApproval: false, and result.rows populated with real (masked-if-applicable) data from customer_demo.customers."
+            "description": "Expect riskLevel: SAFE, requiresApproval: false, and result.rows populated with real data from customer_demo.customers. If the generated SQL selects `email` (flagged PII by the schema-capture heuristic), expect it masked as '***MASKED***' in the response and listed in result.maskedColumns — unless the analyst's custom role has maskPii: false."
           }
         },
         {

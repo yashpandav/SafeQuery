@@ -41,25 +41,25 @@ export default function LoginPage() {
     try {
       const keycloakToken = await getKeycloakToken(email, password)
       const exchanged = await exchangeToken.mutateAsync({ keycloakToken })
-      setSession({ sessionToken: exchanged.sessionToken, userId: exchanged.user.id, email: exchanged.user.email, orgId: '' })
+      setSession({ sessionToken: exchanged.sessionToken, userId: exchanged.user.id, email: exchanged.user.email, orgId: '', platformRole: '' })
       setAwaitingOrgSelection(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     }
   }
 
-  function selectOrganization(orgId: string) {
+  function selectOrganization(orgId: string, platformRole: string) {
     if (!session) return
-    setSession({ ...session, orgId })
+    setSession({ ...session, orgId, platformRole })
     router.push('/')
   }
 
-  const singleOrgId = organizations.data?.length === 1 ? organizations.data[0]?.id : undefined
+  const singleOrg = organizations.data?.length === 1 ? organizations.data[0] : undefined
   useEffect(() => {
-    if (!singleOrgId || !session || session.orgId === singleOrgId) return
-    setSession({ ...session, orgId: singleOrgId })
+    if (!singleOrg || !session || session.orgId === singleOrg.id) return
+    setSession({ ...session, orgId: singleOrg.id, platformRole: singleOrg.platformRole })
     router.push('/')
-  }, [singleOrgId, session, setSession, router])
+  }, [singleOrg, session, setSession, router])
 
   if (awaitingOrgSelection) {
     return (
@@ -84,7 +84,7 @@ export default function LoginPage() {
             <li key={org.id}>
               <button
                 type="button"
-                onClick={() => selectOrganization(org.id)}
+                onClick={() => selectOrganization(org.id, org.platformRole)}
                 className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-left text-sm transition hover:bg-black/[0.03] active:scale-[0.99]"
               >
                 <span className="font-medium">{org.name}</span>
