@@ -12,9 +12,18 @@ export interface RoleFormValues {
   allowedActions: string[]
   rowCap: string
   maskPii: boolean
+  allowExport: boolean
 }
 
-const EMPTY_VALUES: RoleFormValues = { name: '', description: '', allowedTables: '', allowedActions: ['SELECT'], rowCap: '', maskPii: true }
+const EMPTY_VALUES: RoleFormValues = {
+  name: '',
+  description: '',
+  allowedTables: '',
+  allowedActions: ['SELECT'],
+  rowCap: '',
+  maskPii: true,
+  allowExport: false,
+}
 
 interface RoleFormProps {
   initial?: RoleFormValues
@@ -26,6 +35,7 @@ interface RoleFormProps {
     allowedActions: ('SELECT' | 'INSERT' | 'UPDATE' | 'DELETE')[]
     rowCap: number | null
     maskPii: boolean
+    allowExport: boolean
   }) => Promise<void>
   onCancel?: () => void
   pending: boolean
@@ -53,6 +63,7 @@ export function RoleForm({ initial, submitLabel, onSubmit, onCancel, pending }: 
       allowedActions: values.allowedActions as ('SELECT' | 'INSERT' | 'UPDATE' | 'DELETE')[],
       rowCap: values.rowCap.trim() ? Number(values.rowCap) : null,
       maskPii: values.maskPii,
+      allowExport: values.allowExport,
     })
   }
 
@@ -127,6 +138,10 @@ export function RoleForm({ initial, submitLabel, onSubmit, onCancel, pending }: 
         <input type="checkbox" checked={values.maskPii} onChange={(e) => setValues((v) => ({ ...v, maskPii: e.target.checked }))} />
         Mask PII columns by default
       </label>
+      <label className="flex items-center gap-1.5 text-sm">
+        <input type="checkbox" checked={values.allowExport} onChange={(e) => setValues((v) => ({ ...v, allowExport: e.target.checked }))} />
+        Allow exporting results (CSV / JSON)
+      </label>
       <div className="flex gap-3">
         <Button type="submit" variant="primary" disabled={pending || values.allowedActions.length === 0}>
           {pending ? 'Saving…' : submitLabel}
@@ -144,7 +159,7 @@ export function RoleForm({ initial, submitLabel, onSubmit, onCancel, pending }: 
 export function roleToFormValues(role: {
   name: string
   description: string | null
-  config: { allowedTables: string[]; allowedActions: string[]; rowCap: number | null; maskPii?: boolean }
+  config: { allowedTables: string[]; allowedActions: string[]; rowCap: number | null; maskPii?: boolean; allowExport?: boolean }
 }): RoleFormValues {
   return {
     name: role.name,
@@ -153,5 +168,6 @@ export function roleToFormValues(role: {
     allowedActions: role.config.allowedActions,
     rowCap: role.config.rowCap?.toString() ?? '',
     maskPii: role.config.maskPii !== false,
+    allowExport: role.config.allowExport === true,
   }
 }

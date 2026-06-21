@@ -10,6 +10,7 @@ import type {
   CustomRoleResourceAttrs,
   EnvironmentResourceAttrs,
   DashboardResourceAttrs,
+  PolicyResourceAttrs,
   QueryAction,
   ApprovalAction,
   DatabaseConnectionAction,
@@ -18,6 +19,7 @@ import type {
   CustomRoleAction,
   EnvironmentAction,
   DashboardAction,
+  PolicyAction,
   DecisionMap,
   DbTableDecision,
 } from './types'
@@ -179,6 +181,17 @@ export async function checkDashboard(
   actions: DashboardAction[],
 ): Promise<DecisionMap<DashboardAction>> {
   return check(client, principal, 'dashboard', 'workspace', {
+    org_id: resource.orgId,
+  }, actions)
+}
+
+export async function checkPolicy(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resource: PolicyResourceAttrs,
+  actions: PolicyAction[],
+): Promise<DecisionMap<PolicyAction>> {
+  return check(client, principal, 'policy', resource.id, {
     org_id: resource.orgId,
   }, actions)
 }

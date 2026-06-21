@@ -26,7 +26,17 @@ function toCerbosPrincipal(principal: ConnectionPrincipal): CerbosPrincipal {
 }
 
 function toMetadata(row: typeof databaseConnections.$inferSelect): DatabaseConnectionMetadata {
-  return { id: row.id, orgId: row.orgId, environmentId: row.environmentId, name: row.name, ssl: row.ssl, createdAt: row.createdAt }
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    environmentId: row.environmentId,
+    name: row.name,
+    host: row.host,
+    port: row.port,
+    database: row.database,
+    ssl: row.ssl,
+    createdAt: row.createdAt,
+  }
 }
 export async function createConnection(
   deps: ConnectionPipelineDeps,

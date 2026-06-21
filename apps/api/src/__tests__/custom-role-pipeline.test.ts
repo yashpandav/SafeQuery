@@ -87,7 +87,7 @@ describe('createCustomRole', () => {
     const result = await createCustomRole(
       { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
       admin,
-      { name: 'finance-readonly', allowedTables: ['invoices'], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: 500, maskPii: true },
+      { name: 'finance-readonly', allowedTables: ['invoices'], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: 500, maskPii: true, allowExport: false },
     )
 
     expect(result).toMatchObject({ name: 'finance-readonly', memberCount: 0 })
@@ -102,7 +102,7 @@ describe('createCustomRole', () => {
       createCustomRole(
         { db: db as never, cerbosClient: createAdminOnlyCerbosClient() },
         analyst,
-        { name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true },
+        { name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true, allowExport: false },
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })
@@ -121,12 +121,13 @@ describe('updateCustomRole', () => {
     const result = await updateCustomRole(
       { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
       admin,
-      { customRoleId: ROLE_ID, name: 'dev-extended', allowedTables: ['customers', 'orders'], allowedColumns: {}, allowedActions: ['SELECT', 'UPDATE'], rowFilters: {}, rowCap: 2000, maskPii: false },
+      { customRoleId: ROLE_ID, name: 'dev-extended', allowedTables: ['customers', 'orders'], allowedColumns: {}, allowedActions: ['SELECT', 'UPDATE'], rowFilters: {}, rowCap: 2000, maskPii: false, allowExport: true },
     )
 
     expect(result).toMatchObject({ name: 'dev-extended', memberCount: 1 })
     expect(result.config.allowedTables).toEqual(['customers', 'orders'])
     expect(result.config.maskPii).toBe(false)
+    expect(result.config.allowExport).toBe(true)
     expect(updatedByTable.get(customRoles)?.[0]).toMatchObject({ name: 'dev-extended' })
     expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['CUSTOM_ROLE_UPDATED'])
   })
@@ -137,7 +138,7 @@ describe('updateCustomRole', () => {
       updateCustomRole(
         { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
         admin,
-        { customRoleId: ROLE_ID, name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true },
+        { customRoleId: ROLE_ID, name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true, allowExport: false },
       ),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
@@ -148,7 +149,7 @@ describe('updateCustomRole', () => {
       updateCustomRole(
         { db: db as never, cerbosClient: createAdminOnlyCerbosClient() },
         analyst,
-        { customRoleId: ROLE_ID, name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true },
+        { customRoleId: ROLE_ID, name: 'x', allowedTables: [], allowedColumns: {}, allowedActions: ['SELECT'], rowFilters: {}, rowCap: null, maskPii: true, allowExport: false },
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })

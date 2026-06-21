@@ -1,0 +1,1 @@
+ALTER TABLE "query_logs" ADD COLUMN "allow_export" boolean DEFAULT false NOT NULL;

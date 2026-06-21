@@ -7,7 +7,8 @@ import { detectUnauthorizedColumns } from './columns'
 import { extractTableNames, hasLimitClause, countJoins } from './ast-utils'
 import { injectRowFilter, astToSql } from './row-filter'
 import { classifyRisk } from './risk'
-import type { ValidatorOutput, ValidationViolation, EnvironmentType } from './types'
+import { isWithinWriteWindow } from './write-window'
+import type { ValidatorOutput, ValidationViolation, EnvironmentType, WriteWindow } from './types'
 
 export interface ValidateSqlInput {
   sql: string
@@ -16,6 +17,8 @@ export interface ValidateSqlInput {
   customRole: CustomRoleConfig
   environment: EnvironmentType
   schemaSnapshot?: Record<string, ColumnDefinition[]>
+  writeWindow?: WriteWindow | null
+  now?: Date
 }
 
 function piiColumnsFor(schemaSnapshot: Record<string, ColumnDefinition[]>, table: string): string[] {
@@ -141,6 +144,17 @@ export async function validateSql(input: ValidateSqlInput): Promise<ValidatorOut
       severity: 'warning',
       message: `${statementType.toUpperCase()} has no WHERE clause and no row filter was applied`,
     })
+  }
+
+  if (statementType !== 'select' && input.writeWindow && !isWithinWriteWindow(input.now ?? new Date(), input.writeWindow)) {
+    return fail([
+      ...violations,
+      {
+        code: 'OUTSIDE_WRITE_WINDOW',
+        severity: 'error',
+        message: `Writes to this environment are only permitted between ${input.writeWindow.start} and ${input.writeWindow.end} (${input.writeWindow.timezone})`,
+      },
+    ])
   }
 
   const rewrittenSql = astToSql(ast)

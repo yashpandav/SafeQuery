@@ -23,7 +23,34 @@ const RISK_TONE: Record<SubmitResult['riskLevel'], RiskTone> = {
   SECURITY_INCIDENT: 'incident',
 }
 
-function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }) {
+function escapeCsvCell(value: unknown): string {
+  const cell = String(value ?? '')
+  return /[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell
+}
+
+function downloadBlob(content: string, mimeType: string, filename: string) {
+  const url = URL.createObjectURL(new Blob([content], { type: mimeType }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportResult(result: NonNullable<SubmitResult['result']>, format: 'csv' | 'json') {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  if (format === 'json') {
+    downloadBlob(JSON.stringify(result.rows, null, 2), 'application/json', `query-result-${timestamp}.json`)
+    return
+  }
+  const lines = [
+    result.columns.map(escapeCsvCell).join(','),
+    ...result.rows.map((row) => result.columns.map((col) => escapeCsvCell(row[col])).join(',')),
+  ]
+  downloadBlob(lines.join('\n'), 'text/csv', `query-result-${timestamp}.csv`)
+}
+
+function ResultTable({ result, allowExport }: { result: NonNullable<SubmitResult['result']>; allowExport: boolean }) {
   if (result.rowCount === 0) return <p className="text-sm text-muted">No rows returned.</p>
   return (
     <>
@@ -51,10 +78,22 @@ function ResultTable({ result }: { result: NonNullable<SubmitResult['result']> }
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        {result.rowCount} row(s) in {result.executionMs}ms{result.truncated ? ' (truncated by row cap)' : ''}
-        {result.maskedColumns.length > 0 ? ` — masked: ${result.maskedColumns.join(', ')}` : ''}
-      </p>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <p className="text-xs text-muted">
+          {result.rowCount} row(s) in {result.executionMs}ms{result.truncated ? ' (truncated by row cap)' : ''}
+          {result.maskedColumns.length > 0 ? ` — masked: ${result.maskedColumns.join(', ')}` : ''}
+        </p>
+        {allowExport && (
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={() => exportResult(result, 'csv')}>
+              Export CSV
+            </Button>
+            <Button variant="ghost" onClick={() => exportResult(result, 'json')}>
+              Export JSON
+            </Button>
+          </div>
+        )}
+      </div>
     </>
   )
 }
@@ -109,7 +148,7 @@ export function QueryResult({ result, onAcknowledge, acknowledging }: QueryResul
 
       {result.result && (
         <div className="mt-3">
-          <ResultTable result={result.result} />
+          <ResultTable result={result.result} allowExport={result.allowExport} />
         </div>
       )}
     </Card>

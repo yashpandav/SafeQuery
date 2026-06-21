@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, jsonb, timestamp } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, boolean, jsonb, timestamp } from 'drizzle-orm/pg-core'
 import { riskLevelEnum, queryStatusEnum, approvalStatusEnum } from './enums'
 import { organizations } from './organizations'
 import { users } from './users'
@@ -27,6 +27,7 @@ export const queryLogs = pgTable('query_logs', {
   maskedColumns: jsonb('masked_columns').$type<string[]>().notNull().default([]),
   rowCap: integer('row_cap'),
   simulationResult: jsonb('simulation_result').$type<SimulationResult>(),
+  allowExport: boolean('allow_export').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   executedAt: timestamp('executed_at', { withTimezone: true }),
 }).enableRLS()

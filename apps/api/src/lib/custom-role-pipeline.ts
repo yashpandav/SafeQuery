@@ -32,7 +32,15 @@ function toCerbosPrincipal(p: CustomRolePrincipal): CerbosPrincipal {
   return { userId: p.userId, orgId: p.orgId, platformRole: p.platformRole }
 }
 
-function toConfig(input: { allowedTables: string[]; allowedColumns: Record<string, string[]>; allowedActions: CustomRoleConfig['allowedActions']; rowFilters: Record<string, string>; rowCap: number | null; maskPii: boolean }): CustomRoleConfig {
+function toConfig(input: {
+  allowedTables: string[]
+  allowedColumns: Record<string, string[]>
+  allowedActions: CustomRoleConfig['allowedActions']
+  rowFilters: Record<string, string>
+  rowCap: number | null
+  maskPii: boolean
+  allowExport: boolean
+}): CustomRoleConfig {
   return {
     allowedTables: input.allowedTables,
     allowedColumns: input.allowedColumns,
@@ -40,6 +48,7 @@ function toConfig(input: { allowedTables: string[]; allowedColumns: Record<strin
     rowFilters: input.rowFilters,
     rowCap: input.rowCap,
     maskPii: input.maskPii,
+    allowExport: input.allowExport,
   }
 }
 

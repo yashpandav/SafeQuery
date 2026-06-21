@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { environments, auditLogs } from '@repo/db/schema'
-import { listEnvironments, updateEnvironmentType, type EnvironmentPrincipal } from '../lib/environment-pipeline'
+import { listEnvironments, updateEnvironmentType, updateEnvironmentWriteWindow, type EnvironmentPrincipal } from '../lib/environment-pipeline'
 import { createMockDb, type MockDbFixtures } from './mock-db'
 import { createAllowAllCerbosClient } from './mock-cerbos-allow-all'
 import type { CheckResourcesRequest } from '@cerbos/core'
@@ -35,6 +35,10 @@ function createAdminOnlyCerbosClient(): CerbosClient {
     },
   }
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('listEnvironments', () => {
   it('describes each environment\'s actual risk-engine posture, not aspirational copy', async () => {
@@ -92,6 +96,88 @@ describe('updateEnvironmentType', () => {
     const { db } = createMockDb(fixtures())
     await expect(
       updateEnvironmentType({ db: db as never, cerbosClient: createAdminOnlyCerbosClient() }, analyst, { environmentId: ENV_ID, type: 'production' }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+})
+
+describe('updateEnvironmentWriteWindow', () => {
+  function fixtures(): MockDbFixtures {
+    return { environments: { id: ENV_ID, orgId: ORG_ID, name: 'Production', type: 'production', createdAt: new Date() } }
+  }
+
+  it('sets a write window and audits the before/after', async () => {
+    const { db, updatedByTable, insertedByTable } = createMockDb(fixtures())
+    const result = await updateEnvironmentWriteWindow(
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+      admin,
+      { environmentId: ENV_ID, writeWindow: { start: '09:00', end: '17:00', timezone: 'UTC' } },
+    )
+
+    expect(result.writeWindow).toEqual({ start: '09:00', end: '17:00', timezone: 'UTC' })
+    expect(result.posture).toContain('09:00 and 17:00')
+    expect(updatedByTable.get(environments)?.[0]).toMatchObject({
+      writeWindowStart: '09:00',
+      writeWindowEnd: '17:00',
+      writeWindowTimezone: 'UTC',
+    })
+    expect(insertedByTable.get(auditLogs)?.[0]).toMatchObject({ action: 'ENVIRONMENT_UPDATED' })
+  })
+
+  it('reports whether the current moment falls inside the configured window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-15T12:00:00Z'))
+    const { db } = createMockDb(fixtures())
+    const result = await updateEnvironmentWriteWindow(
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+      admin,
+      { environmentId: ENV_ID, writeWindow: { start: '09:00', end: '17:00', timezone: 'UTC' } },
+    )
+    expect(result.withinWriteWindowNow).toBe(true)
+  })
+
+  it('clears a previously configured window when writeWindow is null', async () => {
+    const fx = fixtures()
+    fx.environments = {
+      ...(fx.environments as Record<string, unknown>),
+      writeWindowStart: '09:00',
+      writeWindowEnd: '17:00',
+      writeWindowTimezone: 'UTC',
+    }
+    const { db, updatedByTable } = createMockDb(fx)
+    const result = await updateEnvironmentWriteWindow(
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+      admin,
+      { environmentId: ENV_ID, writeWindow: null },
+    )
+
+    expect(result.writeWindow).toBeNull()
+    expect(result.withinWriteWindowNow).toBeNull()
+    expect(updatedByTable.get(environments)?.[0]).toMatchObject({
+      writeWindowStart: null,
+      writeWindowEnd: null,
+      writeWindowTimezone: null,
+    })
+  })
+
+  it('rejects when the environment does not exist in this org', async () => {
+    const { db } = createMockDb({ environments: undefined })
+    await expect(
+      updateEnvironmentWriteWindow(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+        admin,
+        { environmentId: ENV_ID, writeWindow: { start: '09:00', end: '17:00', timezone: 'UTC' } },
+      ),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+  })
+
+  it('rejects non-admin callers', async () => {
+    const { db } = createMockDb(fixtures())
+    await expect(
+      updateEnvironmentWriteWindow(
+        { db: db as never, cerbosClient: createAdminOnlyCerbosClient() },
+        analyst,
+        { environmentId: ENV_ID, writeWindow: { start: '09:00', end: '17:00', timezone: 'UTC' } },
+      ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })
 })

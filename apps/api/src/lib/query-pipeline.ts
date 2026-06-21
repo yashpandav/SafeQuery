@@ -14,7 +14,9 @@ import type { CerbosClient, CerbosPrincipal } from '@repo/policy-client'
 import { validateSql } from '@repo/sql-validator'
 import { writeAuditLog } from '@repo/audit'
 import { JOB_NAMES, type ExecutionJobData, type JobResultMap, type ConnectionTarget } from '@repo/queue'
+import type { RateLimiter } from '@repo/rate-limit'
 import type { CustomRoleConfig, ColumnDefinition, RiskLevel, PlatformRole, SimulationResult } from '@repo/types'
+import { getRateLimitPolicy } from './policy-pipeline'
 export interface AiServiceClient {
   ai: {
     generate: (input: {
@@ -44,6 +46,7 @@ export interface ExecutionPipelineDeps {
 
 export interface QueryPipelineDeps extends ExecutionPipelineDeps {
   aiService: AiServiceClient
+  rateLimiter?: RateLimiter
 }
 
 export interface SubmitQueryPrincipal {
@@ -77,6 +80,7 @@ export interface SubmitQueryResult {
   violations: { code: string; severity: 'error' | 'warning'; message: string }[]
   result: QueryExecutionResult | null
   simulation: SimulationResult | null
+  allowExport: boolean
 }
 
 export interface AcknowledgeQueryInput {
@@ -89,17 +93,44 @@ function filterSchemaForRole(
   const filtered: Record<string, ColumnDefinition[]> = {}
   for (const table of customRole.allowedTables) {
     const columns = snapshot[table]
-    if (!columns) continue // role references a table no longer in the schema snapshot
+    if (!columns) continue
     const restriction = customRole.allowedColumns[table]
     filtered[table] = restriction && restriction.length > 0 ? columns.filter((c) => restriction.includes(c.column)) : columns
   }
   return filtered
 }
+
+async function enforceRateLimit(db: DbClient, rateLimiter: RateLimiter, principal: SubmitQueryPrincipal): Promise<void> {
+  const policy = await getRateLimitPolicy({ db }, principal.orgId)
+  if (!policy.enabled) return
+
+  const [perUser, perOrg] = await Promise.all([
+    rateLimiter.consume(`query:user:${principal.userId}`, { points: policy.queriesPerMinutePerUser, duration: 60 }),
+    rateLimiter.consume(`query:org:${principal.orgId}`, { points: policy.aiCallsPerDayPerOrg, duration: 86_400 }),
+  ])
+  if (perUser.allowed && perOrg.allowed) return
+
+  const scope = !perUser.allowed ? 'per_user' : 'per_org'
+  await writeAuditLog(db, {
+    orgId: principal.orgId,
+    actorId: principal.userId,
+    action: 'RATE_LIMIT_EXCEEDED',
+    resourceType: 'query_log',
+    resourceId: null,
+    metadata: { scope, retryAfterMs: !perUser.allowed ? perUser.msBeforeNext : perOrg.msBeforeNext },
+  })
+  throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded — please try again later' })
+}
+
 export async function submitQuery(
   deps: QueryPipelineDeps,
   principal: SubmitQueryPrincipal,
   input: SubmitQueryInput,
 ): Promise<SubmitQueryResult> {
+  if (deps.rateLimiter) {
+    await enforceRateLimit(deps.db, deps.rateLimiter, principal)
+  }
+
   const membership = await deps.db.query.organizationMembers.findFirst({
     where: and(eq(organizationMembers.orgId, principal.orgId), eq(organizationMembers.userId, principal.userId)),
   })
@@ -157,6 +188,11 @@ export async function submitQuery(
     return persistRejected(deps, principal, input, generated.sql, generated.riskReason)
   }
 
+  const writeWindow =
+    environment.writeWindowStart && environment.writeWindowEnd && environment.writeWindowTimezone
+      ? { start: environment.writeWindowStart, end: environment.writeWindowEnd, timezone: environment.writeWindowTimezone }
+      : null
+
   const validated = await validateSql({
     sql: generated.sql,
     cerbosClient: deps.cerbosClient,
@@ -164,6 +200,7 @@ export async function submitQuery(
     customRole: customRole.config,
     environment: environment.type,
     schemaSnapshot: filteredSchema,
+    writeWindow,
   })
 
   if (!validated.valid) {
@@ -194,6 +231,7 @@ export async function submitQuery(
       status: 'PENDING',
       maskedColumns: validated.maskedColumns,
       rowCap: customRole.config.rowCap,
+      allowExport: customRole.config.allowExport ?? false,
     })
     .returning()
   if (!queryLog) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
@@ -330,6 +368,7 @@ export async function submitQuery(
     violations: validated.violations,
     result: executionResult,
     simulation,
+    allowExport: customRole.config.allowExport ?? false,
   }
 }
 
@@ -426,6 +465,7 @@ export async function acknowledgeQuery(
     violations: [],
     result: executionResult,
     simulation: queryLog.simulationResult ?? null,
+    allowExport: queryLog.allowExport,
   }
 }
 
@@ -480,5 +520,6 @@ async function persistRejected(
     violations: [{ code: 'REJECTED', severity: 'error', message: reason }],
     result: null,
     simulation: null,
+    allowExport: false,
   }
 }

@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { queryLogs, approvalRequests, auditLogs } from '@repo/db/schema'
 import { JOB_NAMES } from '@repo/queue'
+import { createMemoryRateLimiter } from '@repo/rate-limit'
 import type { CustomRoleConfig } from '@repo/types'
 import { submitQuery, acknowledgeQuery, type AiServiceClient, type SubmitQueryPrincipal } from '../lib/query-pipeline'
 import { createMockDb, type MockDbFixtures } from './mock-db'
@@ -49,6 +50,10 @@ function baseFixtures(customRole: CustomRoleConfig, environmentType: 'developmen
 function aiServiceReturning(result: Awaited<ReturnType<AiServiceClient['ai']['generate']>>): AiServiceClient {
   return { ai: { generate: async () => result } }
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('submitQuery', () => {
   it('SAFE: executes the read job, persists EXECUTED, and returns results', async () => {
@@ -312,6 +317,45 @@ describe('submitQuery', () => {
     expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['QUERY_SUBMITTED', 'APPROVAL_REQUESTED'])
   })
 
+  it('SECURITY_INCIDENT: a write outside the environment write window is rejected without enqueueing (SQ-054)', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-15T20:00:00Z'))
+
+    const writeRole: CustomRoleConfig = { ...readOnlyRole, allowedActions: ['SELECT', 'UPDATE'] }
+    const fixtures = baseFixtures(writeRole, 'production')
+    fixtures.environments = {
+      ...(fixtures.environments as Record<string, unknown>),
+      writeWindowStart: '09:00',
+      writeWindowEnd: '17:00',
+      writeWindowTimezone: 'UTC',
+    }
+    const { db, insertedByTable } = createMockDb(fixtures)
+    const { client: executionQueue, calls } = createMockExecutionQueue()
+    const result = await submitQuery(
+      {
+        db: db as never,
+        cerbosClient: createMockCerbosClient(ORG_ID, writeRole),
+        aiService: aiServiceReturning({
+          sql: "UPDATE customers SET status = 'inactive' WHERE id = 1",
+          explanation: 'Deactivates a customer',
+          riskLevel: 'WARNING',
+          riskReason: 'model guess',
+          affectedTables: ['customers'],
+          isWrite: true,
+          estimatedRowCount: 1,
+        }),
+        executionQueue,
+      },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'deactivate customer 1' },
+    )
+
+    expect(result.riskLevel).toBe('SECURITY_INCIDENT')
+    expect(calls).toHaveLength(0)
+    expect(insertedByTable.get(approvalRequests)).toBeUndefined()
+    expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['QUERY_SUBMITTED', 'SECURITY_INCIDENT_DETECTED'])
+  })
+
   it('SECURITY_INCIDENT from ai-service: persists FAILED without calling sql-validator or the execution queue', async () => {
     const { db, insertedByTable } = createMockDb(baseFixtures(readOnlyRole))
     const { client: executionQueue, calls } = createMockExecutionQueue()
@@ -486,10 +530,171 @@ function awaitingAckQueryLog(overrides: Record<string, unknown> = {}) {
     status: 'AWAITING_ACKNOWLEDGMENT',
     maskedColumns: [],
     rowCap: 1000,
+    allowExport: false,
     simulationResult: { type: 'explain', estimatedRowCount: 500, executionMs: 3 },
     ...overrides,
   }
 }
+
+describe('allowExport propagation (SQ-046)', () => {
+  it('submitQuery: defaults to false when the role does not opt in', async () => {
+    const { db } = createMockDb(baseFixtures(readOnlyRole))
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await submitQuery(
+      {
+        db: db as never,
+        cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole),
+        aiService: aiServiceReturning({
+          sql: 'SELECT id FROM customers LIMIT 10',
+          explanation: 'Lists customer ids',
+          riskLevel: 'SAFE',
+          riskReason: 'Bounded read',
+          affectedTables: ['customers'],
+          isWrite: false,
+          estimatedRowCount: 10,
+        }),
+        executionQueue,
+      },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    expect(result.allowExport).toBe(false)
+  })
+
+  it('submitQuery: reflects the role config when allowExport is enabled', async () => {
+    const exportRole: CustomRoleConfig = { ...readOnlyRole, allowExport: true }
+    const { db } = createMockDb(baseFixtures(exportRole))
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await submitQuery(
+      {
+        db: db as never,
+        cerbosClient: createMockCerbosClient(ORG_ID, exportRole),
+        aiService: aiServiceReturning({
+          sql: 'SELECT id FROM customers LIMIT 10',
+          explanation: 'Lists customer ids',
+          riskLevel: 'SAFE',
+          riskReason: 'Bounded read',
+          affectedTables: ['customers'],
+          isWrite: false,
+          estimatedRowCount: 10,
+        }),
+        executionQueue,
+      },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    expect(result.allowExport).toBe(true)
+  })
+
+  it('acknowledgeQuery: honors the allowExport persisted on the query_logs row at submit time', async () => {
+    const { db } = createMockDb({
+      ...baseFixtures(readOnlyRole),
+      queryLogs: awaitingAckQueryLog({ allowExport: true }),
+    })
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await acknowledgeQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), executionQueue },
+      principal,
+      { queryLogId: QUERY_LOG_ID },
+    )
+    expect(result.allowExport).toBe(true)
+  })
+})
+
+describe('rate limiting (SQ-059)', () => {
+  function safeAiService(): AiServiceClient {
+    return aiServiceReturning({
+      sql: 'SELECT id FROM customers LIMIT 10',
+      explanation: 'Lists customer ids',
+      riskLevel: 'SAFE',
+      riskReason: 'Bounded read',
+      affectedTables: ['customers'],
+      isWrite: false,
+      estimatedRowCount: 10,
+    })
+  }
+
+  it('allows submission while under both the per-user and per-org limits', async () => {
+    const { db } = createMockDb(baseFixtures(readOnlyRole))
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await submitQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter: createMemoryRateLimiter() },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    expect(result.riskLevel).toBe('SAFE')
+  })
+
+  it('rejects with TOO_MANY_REQUESTS once the per-user limit is exhausted, and audits it', async () => {
+    const fixtures: MockDbFixtures = { ...baseFixtures(readOnlyRole), policies: { type: 'rate_limit', enabled: true, config: { queriesPerMinutePerUser: 1, aiCallsPerDayPerOrg: 500 } } }
+    const { db, insertedByTable } = createMockDb(fixtures)
+    const { client: executionQueue, calls } = createMockExecutionQueue()
+    const rateLimiter = createMemoryRateLimiter()
+
+    await submitQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    await expect(
+      submitQuery(
+        { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter },
+        principal,
+        { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids again' },
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' })
+
+    expect(calls).toHaveLength(1)
+    expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toContain('RATE_LIMIT_EXCEEDED')
+  })
+
+  it('rejects once the per-org limit is exhausted even for a different user', async () => {
+    const fixtures: MockDbFixtures = { ...baseFixtures(readOnlyRole), policies: { type: 'rate_limit', enabled: true, config: { queriesPerMinutePerUser: 500, aiCallsPerDayPerOrg: 1 } } }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue, calls } = createMockExecutionQueue()
+    const rateLimiter = createMemoryRateLimiter()
+    const otherUser: SubmitQueryPrincipal = { ...principal, userId: 'user-2' }
+
+    await submitQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    await expect(
+      submitQuery(
+        { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter },
+        otherUser,
+        { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+      ),
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' })
+
+    expect(calls).toHaveLength(1)
+  })
+
+  it('skips enforcement entirely when the org policy is disabled', async () => {
+    const fixtures: MockDbFixtures = { ...baseFixtures(readOnlyRole), policies: { type: 'rate_limit', enabled: false, config: { queriesPerMinutePerUser: 0, aiCallsPerDayPerOrg: 0 } } }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await submitQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue, rateLimiter: createMemoryRateLimiter() },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    expect(result.riskLevel).toBe('SAFE')
+  })
+
+  it('does not enforce at all when no rateLimiter dep is provided', async () => {
+    const fixtures: MockDbFixtures = { ...baseFixtures(readOnlyRole), policies: { type: 'rate_limit', enabled: true, config: { queriesPerMinutePerUser: 0, aiCallsPerDayPerOrg: 0 } } }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue } = createMockExecutionQueue()
+    const result = await submitQuery(
+      { db: db as never, cerbosClient: createMockCerbosClient(ORG_ID, readOnlyRole), aiService: safeAiService(), executionQueue },
+      principal,
+      { connectionId: CONNECTION_ID, naturalLanguage: 'show customer ids' },
+    )
+    expect(result.riskLevel).toBe('SAFE')
+  })
+})
 
 describe('acknowledgeQuery', () => {
   it('runs the real read job, marks the query EXECUTED, and returns the masked rows', async () => {

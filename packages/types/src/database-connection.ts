@@ -1,11 +1,16 @@
 import { z } from 'zod'
 import { EnvironmentType } from './enums'
 
+const TIME_OF_DAY_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/
+
 export const EnvironmentSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
   name: z.string().min(1).max(100),
   type: EnvironmentType,
+  writeWindowStart: z.string().regex(TIME_OF_DAY_REGEX).nullable(),
+  writeWindowEnd: z.string().regex(TIME_OF_DAY_REGEX).nullable(),
+  writeWindowTimezone: z.string().nullable(),
   createdAt: z.date(),
 })
 export type Environment = z.infer<typeof EnvironmentSchema>
@@ -21,6 +26,18 @@ export const UpdateEnvironmentTypeSchema = z.object({
   type: EnvironmentType,
 })
 export type UpdateEnvironmentType = z.infer<typeof UpdateEnvironmentTypeSchema>
+
+export const UpdateEnvironmentWriteWindowSchema = z.object({
+  environmentId: z.string().uuid(),
+  writeWindow: z
+    .object({
+      start: z.string().regex(TIME_OF_DAY_REGEX, 'Use 24-hour HH:MM'),
+      end: z.string().regex(TIME_OF_DAY_REGEX, 'Use 24-hour HH:MM'),
+      timezone: z.string().min(1),
+    })
+    .nullable(),
+})
+export type UpdateEnvironmentWriteWindow = z.infer<typeof UpdateEnvironmentWriteWindowSchema>
 
 export const DatabaseConnectionSchema = z.object({
   id: z.string().uuid(),
@@ -41,6 +58,9 @@ export const DatabaseConnectionMetadataSchema = DatabaseConnectionSchema.pick({
   orgId: true,
   environmentId: true,
   name: true,
+  host: true,
+  port: true,
+  database: true,
   ssl: true,
   createdAt: true,
 })

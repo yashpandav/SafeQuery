@@ -9,6 +9,7 @@ import { auditRouter } from './audit'
 import { customRoleRouter } from './custom-role'
 import { environmentRouter } from './environment'
 import { dashboardRouter } from './dashboard'
+import { policyRouter } from './policy'
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -21,5 +22,6 @@ export const appRouter = createTRPCRouter({
   customRole: customRoleRouter,
   environment: environmentRouter,
   dashboard: dashboardRouter,
+  policy: policyRouter,
 })
 export type AppRouter = typeof appRouter

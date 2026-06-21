@@ -35,7 +35,7 @@ my-turborepo/
 │   ├── audit/            # Hash-chain audit writer + verify-integrity ✅ BUILT
 │   ├── secrets/          # AES-256-GCM envelope encryption for DB credentials ✅ BUILT
 │   ├── queue/            # Shared BullMQ job contracts (api ↔ dispatcher ↔ executor) ✅ BUILT
-│   ├── rate-limit/       # rate-limiter-flexible wrappers (NOT YET CREATED)
+│   ├── rate-limit/       # rate-limiter-flexible wrappers (Redis-backed + in-memory for tests) ✅ BUILT
 │   ├── eslint-config/    # Shared ESLint configs ✅ EXISTS
 │   └── typescript-config/ # Shared TS configs ✅ EXISTS
 ├── infra/
@@ -246,6 +246,20 @@ data/result shape, plus a `JobResultMap` that lets a generic caller (`ExecutionQ
 back the specific result type for the job it sent, not the full union. `createRedisConnection()` sets
 `maxRetriesPerRequest: null`, which BullMQ requires.
 
+### `packages/rate-limit`
+Thin wrapper over `rate-limiter-flexible` (SQ-059). `RateLimiter.consume(key, { points, duration })`
+takes points/duration **per call**, not fixed at construction — required because limits are
+org-configurable at runtime (`policies` table, see `apps/api`'s policy section below) and "permissions
+resolved live, never cached" is already an architectural invariant for everything else in this codebase.
+`createRedisRateLimiter(redis)` is safe to construct a fresh `RateLimiterRedis` wrapper per call despite
+that, because the actual counter lives in Redis keyed by `key` — the JS object is just config, not state.
+`createMemoryRateLimiter()` (tests/dev) is the opposite: `RateLimiterMemory` holds counters *in the
+instance*, so it caches one instance per distinct `(points, duration)` pair internally to keep state
+across calls — without that, every call would get a fresh empty counter and never block. 4 unit tests
+(`pnpm --filter @repo/rate-limit test`) cover both behaviors using the real in-memory limiter, not a
+hand-rolled fake — `apps/api`'s own tests reuse this same `createMemoryRateLimiter()` rather than a
+second mock.
+
 ### `apps/api`
 Express server with tRPC router. Three-tier procedure hierarchy:
 - `baseProcedure` — public
@@ -295,9 +309,56 @@ still `AWAITING_ACKNOWLEDGMENT`, FORBIDDEN unless the caller is the original sub
 not a reviewer decision — no Cerbos action for this, it's a continuation of the request the caller
 already had authorized, not a new authorization decision). On success: writes `QUERY_ACKNOWLEDGED` to
 the audit log, then re-enqueues the *same* validated SQL as a real (non-`explainOnly`) `execute_read`
-job using the `rowCap`/`maskedColumns` persisted on the `query_logs` row at submit time (so the
-re-execution honors exactly what was already validated, not a freshly-refetched value that could have
-drifted), and updates `query_logs` to `EXECUTED`/`FAILED` exactly like the SAFE path does.
+job using the `rowCap`/`maskedColumns`/`allowExport` persisted on the `query_logs` row at submit time
+(so the re-execution honors exactly what was already validated, not a freshly-refetched value that
+could have drifted — `allowExport` joined this list for SQ-046, the same reasoning as the two that were
+already there), and updates `query_logs` to `EXECUTED`/`FAILED` exactly like the SAFE path does.
+
+**Result export (SQ-046).** `CustomRoleConfig.allowExport` (optional, default/undefined = **not**
+allowed — the opposite default of `maskPii`, since handing raw result rows to a file is the more
+sensitive capability, not the safer one) is set per role in the same admin role form as `maskPii`
+(`apps/web/app/admin/role-form.tsx`, "Allow exporting results (CSV / JSON)") and surfaced read-only on
+the roles table as an "Export" badge. `query.submit`/`query.acknowledge` both return it on
+`SubmitQueryResult.allowExport`; `apps/web/app/query-result.tsx` only renders "Export CSV"/"Export JSON"
+buttons when it's `true` and rows exist. Export happens **entirely client-side** — `apps/api` already
+sent the (masked, row-capped) result rows to the browser in the `query.submit`/`.acknowledge` response,
+so building a CSV/JSON blob from data already in memory needed no new endpoint, no new dependency, and
+no second round trip; a server-side export endpoint would only duplicate data the client already has.
+True binary `.xlsx` (a `exceljs`/`xlsx` dependency) was deliberately not added — the generated CSV opens
+directly in Excel for the typical case (strings/numbers), and a real spreadsheet library was judged not
+worth the added bundle size and maintenance surface for that marginal gain; CSV/JSON cover the ticket's
+acceptance criteria's substance.
+
+**Application rate limiting (SQ-059).** `submitQuery()`'s very first step — before the membership/role
+lookups even run — is `enforceRateLimit()`: resolves the caller's org's effective policy (`policies`
+table row with `type: 'rate_limit'`, or `DEFAULT_RATE_LIMIT_POLICY` — `{ enabled: true,
+queriesPerMinutePerUser: 20, aiCallsPerDayPerOrg: 500 }` — if the org has never configured one; this
+default had to be generous enough to never surprise an existing workload, since it's a brand-new
+restriction nobody opted into), then — only if `enabled` — consumes both a per-user key
+(`query:user:{userId}`, 60s window) and a per-org key (`query:org:{orgId}`, 86400s window) from
+`QueryPipelineDeps.rateLimiter` (`@repo/rate-limit`'s `RateLimiter`). Either one being exhausted writes
+a `RATE_LIMIT_EXCEEDED` audit entry (`scope: 'per_user' | 'per_org'`, `retryAfterMs`) and throws
+`TOO_MANY_REQUESTS` — nothing is persisted to `query_logs`, no AI call happens, matching the docs' "LLM
+cost-control story" framing (PROOF_OF_CONCEPT.md §19): the per-org cap exists specifically to bound
+runaway AI spend, not just request volume. `rateLimiter` is **optional** on `QueryPipelineDeps` — every
+one of the 16 pre-existing `submitQuery()` call sites in `query-pipeline.test.ts` needed zero changes,
+since skipping enforcement entirely when the dep is absent follows the same "optional dep for
+testability" precedent as `writeWindow`/`now` in `sql-validator`'s `validateSql`. The real singleton
+(`src/lib/rate-limiter.ts`) opens its **own** Redis connection via `@repo/queue`'s
+`createRedisConnection()` rather than reusing `execution-queue.ts`'s — BullMQ's connection can enter
+blocking/subscriber modes that plain Redis commands shouldn't share.
+
+**`policy.getRateLimits`/`.updateRateLimits`** (`src/trpc/routers/policy.ts`,
+`src/lib/policy-pipeline.ts`) — the admin-facing other half of SQ-059, gated by a new `policy.yaml`
+Cerbos policy (`same_org_admin` only, matching `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`).
+Reuses the existing, previously-unused `policies` table (`orgId`/`name`/`type`/`config` jsonb/`enabled`)
+rather than adding new columns somewhere — unlike SQ-054's write-window (a single environment's own
+property, so it went directly on the `environments` row), a rate-limit policy is an org-wide knob with
+no natural single owning row, which is exactly the shape `policies` was already designed for.
+`updateRateLimits` upserts the org's one `type: 'rate_limit'` row and writes `POLICY_UPDATED` to the
+audit log (an action that already existed in `AuditAction`, unused until now). `apps/web/app/admin`'s
+"Rate limits" panel is a single org-wide form (enabled toggle + two number inputs), not a per-row table
+like the roles/connections/environments sections above it, since there's exactly one policy per org.
 
 **`organization.list`** (`src/trpc/routers/organization.ts`, `listMyOrganizations()` in
 `src/lib/organization-pipeline.ts`) — `authedProcedure`, not `orgProcedure`: the caller doesn't have an
@@ -356,15 +417,40 @@ made operable from the UI instead of requiring a seed script. All four actions a
 schema's `custom_role_id` FK `ON DELETE SET NULL`: members assigned to a deleted role simply lose
 `query.submit` capability rather than the delete being blocked or cascading.
 
-**`environment.list`/`.updateType`** (`src/trpc/routers/environment.ts`,
-`src/lib/environment-pipeline.ts`) — SQ-018. `list` returns each environment with a **`posture`
+**`environment.list`/`.updateType`/`.updateWriteWindow`** (`src/trpc/routers/environment.ts`,
+`src/lib/environment-pipeline.ts`) — SQ-018 + SQ-054. `list` returns each environment with a **`posture`
 string describing what the risk engine actually does today** for that `type`
 (`packages/sql-validator/src/risk.ts`'s real branching — production writes are always CRITICAL,
 everything else is WARNING unless unfiltered-destructive), not aspirational policy copy. `updateType`
-is the one real "Configure" lever this exposes: changing an environment's `development`/`staging`/
+is one real "Configure" lever this exposes: changing an environment's `development`/`staging`/
 `production` classification immediately changes how the risk engine classifies every future write
 against it, since `risk.ts` reads that field directly — there's no separate policy-posture schema to
 keep in sync.
+
+`updateWriteWindow` is the second lever (SQ-054, time-window policies): an optional per-environment
+`{ start, end, timezone }` ("HH:MM" 24-hour + IANA zone) stored directly on the `environments` row
+(`writeWindowStart`/`writeWindowEnd`/`writeWindowTimezone`, all three null = unrestricted, the default
+for every existing environment — adding this couldn't silently change behavior for environments nobody
+configured one for). Enforcement lives in `packages/sql-validator`, the same place environment-type
+posture is enforced, **not** as a Cerbos condition — the ticket's acceptance criteria says "via a
+Cerbos condition," but `environment.yaml` is pure RBAC with no CEL conditions at all and production-
+write-is-CRITICAL was never expressed that way either; adding a second enforcement mechanism (Cerbos
+conditions) alongside the first (risk.ts) for the same kind of policy would mean keeping two systems in
+sync for no real benefit, so this follows the precedent already set rather than the doc literally.
+`validateSql` takes an optional `writeWindow`/`now` (the latter injectable for tests, defaulting to the
+real clock) and `isWithinWriteWindow` (`packages/sql-validator/src/write-window.ts`, handles windows
+that wrap past midnight, e.g. `22:00`–`06:00`, and resolves "now" in the configured IANA zone via
+`Intl.DateTimeFormat` — no timezone library dependency) — a write outside the window becomes an
+`OUTSIDE_WRITE_WINDOW` **error**-severity violation, which the existing "any error violation is
+SECURITY_INCIDENT, no approval path" rule in `validate.ts` already covers for free; no new branch in
+`classifyRisk` was needed. `query.submit` (`query-pipeline.ts`) builds the `writeWindow` from whichever
+environment the query's connection points at and passes it straight through — `query.acknowledge`
+doesn't need the same wiring since it only ever resumes a WARNING (non-CRITICAL, never a write that
+reached the window check) that already passed validation at submit time. `apps/web/app/admin/page.tsx`'s
+environment table shows the configured window plus a live "open now"/"closed now" badge
+(`EnvironmentSummary.withinWriteWindowNow`, computed server-side at request time, not cached) and an
+inline editor (`<input type="time">` ×2 + a free-text IANA-zone field) with a "Clear (unrestricted)"
+action that nulls all three columns back out.
 
 **`dashboard.summary`** (`src/trpc/routers/dashboard.ts`, `src/lib/dashboard-pipeline.ts`) — the
 workspace-settings stat cards (queries today by risk level, pending-approval count + average wait,
@@ -507,11 +593,20 @@ manual config; `organization.list` resolves live from `organization_members`, th
   dashboard matching `Docs/Design/image-4.png`: `dashboard.summary`'s 4 stat cards, a custom-roles
   table (`customRole.list`) with an inline create form and a per-row inline edit form
   (`app/admin/role-form.tsx`, reused for both — same component, prefilled vs. empty initial values),
+  a database-connections table (`databaseConnection.list`) with a create form
+  (`app/admin/connection-form.tsx`, SQ-019/021/022 UI — the backend `create`/`captureSchema` pipeline
+  existed since P1 but had no admin surface until now) that calls `databaseConnection.create` (which
+  runs the real `test_connection` job before persisting — a failed test surfaces its error inline and
+  nothing is saved) and a per-row "Capture schema" button calling `databaseConnection.captureSchema`,
   and an environment policy posture table (`environment.list`) where the type dropdown calls
   `environment.updateType` directly — no separate "save" step. `Session` now carries `platformRole`
   (set from the selected org's membership row at login) so the nav bar and this page's own redirect
   guard can both gate on it client-side, in addition to the real enforcement happening server-side via
-  `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`'s Cerbos checks.
+  `custom_role.yaml`/`environment.yaml`/`database_connection.yaml`/`dashboard.yaml`'s Cerbos checks.
+  `DatabaseConnectionMetadataSchema` (`packages/types`) now also returns `host`/`port`/`database` (not
+  just `id`/`name`/`ssl`) — those identify *where* a connection points, not a secret, unlike
+  username/password which never leave `apps/tre-executor`'s encrypted envelope; the admin table needs
+  them to tell connections apart.
 - `app/audit-log/page.tsx` — `audit.list` rendered as a TIME/EVENT/RISK/HASH table (action names
   humanized from `SCREAMING_SNAKE_CASE` rather than a hand-maintained lookup table, so new
   `AuditAction` values render correctly with zero changes here); the RISK column only shows a badge
@@ -554,6 +649,9 @@ Policy files follow Cerbos `api.cerbos.dev/v1` schema:
   §16). Attribute-only, no Cerbos roles — gates on `org_id` match + table in `table_scope` + action in
   `capabilities`, all flattened from the caller's resolved `CustomRoleConfig`. Echoes back `rowFilter` /
   `maskedColumns` as output for `sql-validator` to inject; never invents them itself.
+- `policy.yaml` — `same_org_admin`-only `read`/`update` on the org-wide `policies` table rows (rate
+  limits today; PII/time policy knobs could follow the same shape later), matching
+  `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`'s pure-RBAC pattern.
 
 ### Keycloak (`infra/docker/keycloak/safequery-realm.json`)
 Realm `safequery`, client `safequery-web` (public PKCE), client `safequery-api` (confidential).
@@ -589,7 +687,7 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
 | P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
-| P2 | Governance | ✅ Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD (SQ-018), PII column masking (SQ-052, was a long-standing no-op until this fix) all done — `apps/web/app/admin` + `apps/web/app/audit-log`. Still 🔲: multi-tenancy UI, multiple DB connections UI, time-window policies |
+| P2 | Governance | ✅ Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059) all done — `apps/web/app/admin` + `apps/web/app/audit-log`. Still 🔲: multi-tenancy UI (org switcher/invite flow, SQ-016) |
 | P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { customRoles, environments, queryLogs, approvalRequests } from '@repo/db/schema'
+import { customRoles, environments, queryLogs, approvalRequests, policies } from '@repo/db/schema'
 
 export interface MockDbFixtures {
   organizationMembers?: unknown
@@ -9,6 +9,7 @@ export interface MockDbFixtures {
   schemaSnapshots?: unknown
   approvalRequests?: unknown
   queryLogs?: unknown
+  policies?: unknown
   approvalRequestsList?: unknown[]
   queryLogsList?: unknown[]
   organizationMembersList?: unknown[]
@@ -58,6 +59,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
     if (table === environments) return fixtures.environments as Record<string, unknown> | undefined
     if (table === queryLogs) return fixtures.queryLogs as Record<string, unknown> | undefined
     if (table === approvalRequests) return fixtures.approvalRequests as Record<string, unknown> | undefined
+    if (table === policies) return fixtures.policies as Record<string, unknown> | undefined
     return undefined
   }
 
@@ -112,6 +114,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
       schemaSnapshots: { findFirst: () => Promise<unknown> }
       approvalRequests: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       queryLogs: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
+      policies: { findFirst: () => Promise<unknown> }
       auditLogs: { findMany: () => Promise<unknown[]> }
       users: { findMany: () => Promise<unknown[]> }
     }
@@ -149,6 +152,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
         findFirst: async () => fixtures.queryLogs ?? null,
         findMany: async () => fixtures.queryLogsList ?? [],
       },
+      policies: { findFirst: async () => fixtures.policies ?? null },
       auditLogs: { findMany: async () => fixtures.auditLogsList ?? [] },
       users: { findMany: async () => fixtures.usersList ?? [] },
     },

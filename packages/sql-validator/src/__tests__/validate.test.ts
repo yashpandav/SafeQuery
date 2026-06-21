@@ -228,3 +228,63 @@ describe('validateSql — adversarial corpus (must always reject as SECURITY_INC
     expect(result.riskLevel).toBe('SECURITY_INCIDENT')
   })
 })
+
+describe('validateSql — time-window policies (SQ-054)', () => {
+  const window = { start: '09:00', end: '17:00', timezone: 'UTC' }
+
+  it('rejects a write outside the configured window as SECURITY_INCIDENT', async () => {
+    const result = await validateSql({
+      sql: "UPDATE customers SET status = 'inactive' WHERE id = 1",
+      cerbosClient: createMockCerbosClient(ORG_ID, FULL_ACCESS_ROLE),
+      principal,
+      customRole: FULL_ACCESS_ROLE,
+      environment: 'production',
+      writeWindow: window,
+      now: new Date('2026-01-15T20:00:00Z'),
+    })
+    expect(result.valid).toBe(false)
+    expect(result.riskLevel).toBe('SECURITY_INCIDENT')
+    expect(result.violations.map((v) => v.code)).toContain('OUTSIDE_WRITE_WINDOW')
+  })
+
+  it('allows the same write inside the configured window', async () => {
+    const result = await validateSql({
+      sql: "UPDATE customers SET status = 'inactive' WHERE id = 1",
+      cerbosClient: createMockCerbosClient(ORG_ID, FULL_ACCESS_ROLE),
+      principal,
+      customRole: FULL_ACCESS_ROLE,
+      environment: 'production',
+      writeWindow: window,
+      now: new Date('2026-01-15T12:00:00Z'),
+    })
+    expect(result.valid).toBe(true)
+    expect(result.riskLevel).toBe('CRITICAL')
+  })
+
+  it('never restricts SELECTs, even outside the window', async () => {
+    const result = await validateSql({
+      sql: 'SELECT id, name FROM customers LIMIT 10',
+      cerbosClient: createMockCerbosClient(ORG_ID, READ_ONLY_ROLE),
+      principal,
+      customRole: READ_ONLY_ROLE,
+      environment: 'production',
+      writeWindow: window,
+      now: new Date('2026-01-15T20:00:00Z'),
+    })
+    expect(result.valid).toBe(true)
+    expect(result.riskLevel).toBe('SAFE')
+  })
+
+  it('does not restrict writes when no window is configured', async () => {
+    const result = await validateSql({
+      sql: "UPDATE customers SET status = 'inactive' WHERE id = 1",
+      cerbosClient: createMockCerbosClient(ORG_ID, FULL_ACCESS_ROLE),
+      principal,
+      customRole: FULL_ACCESS_ROLE,
+      environment: 'production',
+      now: new Date('2026-01-15T20:00:00Z'),
+    })
+    expect(result.valid).toBe(true)
+    expect(result.riskLevel).toBe('CRITICAL')
+  })
+})

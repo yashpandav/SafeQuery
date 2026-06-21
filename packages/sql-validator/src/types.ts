@@ -5,6 +5,12 @@ export type StatementType = DbTableAction
 
 export type EnvironmentType = 'development' | 'staging' | 'production'
 
+export interface WriteWindow {
+  start: string
+  end: string
+  timezone: string
+}
+
 export type ViolationCode =
   | 'PARSE_ERROR'
   | 'MULTI_STATEMENT'
@@ -17,6 +23,7 @@ export type ViolationCode =
   | 'MISSING_LIMIT'
   | 'EXCESSIVE_JOINS'
   | 'UNFILTERED_DESTRUCTIVE_WRITE'
+  | 'OUTSIDE_WRITE_WINDOW'
 
 export interface ValidationViolation {
   code: ViolationCode

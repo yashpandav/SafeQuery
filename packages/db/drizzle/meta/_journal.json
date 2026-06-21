@@ -15,6 +15,20 @@
       "when": 1781843519891,
       "tag": "0001_striped_darkhawk",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782018765568,
+      "tag": "0002_striped_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1782029116850,
+      "tag": "0003_naive_emma_frost",
+      "breakpoints": true
     }
   ]
 }

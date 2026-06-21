@@ -52,6 +52,11 @@ export interface DashboardResourceAttrs {
   orgId: string
 }
 
+export interface PolicyResourceAttrs {
+  id: string
+  orgId: string
+}
+
 export interface DbTablePrincipalAttrs {
   tableScope: string[]
   capabilities: DbTableAction[]
@@ -86,6 +91,8 @@ export type CustomRoleAction = 'create' | 'read' | 'update' | 'delete'
 export type EnvironmentAction = 'create' | 'read' | 'update' | 'delete'
 
 export type DashboardAction = 'read'
+
+export type PolicyAction = 'read' | 'update'
 
 export type DecisionMap<T extends string> = Record<T, boolean>
 

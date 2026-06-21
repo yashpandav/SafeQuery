@@ -22,6 +22,7 @@ export const CreateCustomRoleSchema = z.object({
   rowFilters: z.record(z.string(), z.string()).default({}),
   rowCap: z.number().int().positive().nullable(),
   maskPii: z.boolean().default(true),
+  allowExport: z.boolean().default(false),
 })
 export type CreateCustomRole = z.infer<typeof CreateCustomRoleSchema>
 
@@ -35,5 +36,6 @@ export const UpdateCustomRoleSchema = z.object({
   rowFilters: z.record(z.string(), z.string()).default({}),
   rowCap: z.number().int().positive().nullable(),
   maskPii: z.boolean().default(true),
+  allowExport: z.boolean().default(false),
 })
 export type UpdateCustomRole = z.infer<typeof UpdateCustomRoleSchema>

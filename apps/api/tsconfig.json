@@ -10,6 +10,7 @@
       "@repo/db/client": ["../../packages/db/src/client.ts"],
       "@repo/policy-client": ["../../packages/policy-client/src/index.ts"],
       "@repo/queue": ["../../packages/queue/src/index.ts"],
+      "@repo/rate-limit": ["../../packages/rate-limit/src/index.ts"],
       "@repo/sql-validator": ["../../packages/sql-validator/src/index.ts"],
       "@repo/types": ["../../packages/types/src/index.ts"],
       "@repo/ai-service/router": ["../ai-service/src/trpc/routers/_app.ts"]
