@@ -35,6 +35,7 @@ export default function AdminPage() {
   const envs = useQuery({ ...trpc.environment.list.queryOptions(), enabled: Boolean(session) && isAdmin })
   const connections = useQuery({ ...trpc.databaseConnection.list.queryOptions(), enabled: Boolean(session) && isAdmin })
   const rateLimits = useQuery({ ...trpc.policy.getRateLimits.queryOptions(), enabled: Boolean(session) && isAdmin })
+  const invitations = useQuery({ ...trpc.invitation.list.queryOptions(), enabled: Boolean(session) && isAdmin })
 
   const createRole = useMutation(trpc.customRole.create.mutationOptions())
   const updateRole = useMutation(trpc.customRole.update.mutationOptions())
@@ -44,6 +45,8 @@ export default function AdminPage() {
   const captureSchema = useMutation(trpc.databaseConnection.captureSchema.mutationOptions())
   const updateWriteWindow = useMutation(trpc.environment.updateWriteWindow.mutationOptions())
   const updateRateLimits = useMutation(trpc.policy.updateRateLimits.mutationOptions())
+  const createInvitation = useMutation(trpc.invitation.create.mutationOptions())
+  const revokeInvitation = useMutation(trpc.invitation.revoke.mutationOptions())
 
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null)
@@ -56,6 +59,9 @@ export default function AdminPage() {
   const [windowError, setWindowError] = useState<string | null>(null)
   const [rateLimitDraft, setRateLimitDraft] = useState<{ enabled: boolean; queriesPerMinutePerUser: string; aiCallsPerDayPerOrg: string } | null>(null)
   const [rateLimitError, setRateLimitError] = useState<string | null>(null)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<'admin' | 'reviewer' | 'analyst' | 'viewer'>('analyst')
+  const [inviteError, setInviteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (rateLimits.data && !rateLimitDraft) {
@@ -73,6 +79,10 @@ export default function AdminPage() {
 
   async function refetchConnections() {
     await queryClient.invalidateQueries({ queryKey: trpc.databaseConnection.list.queryKey() })
+  }
+
+  async function refetchInvitations() {
+    await queryClient.invalidateQueries({ queryKey: trpc.invitation.list.queryKey() })
   }
 
   if (!session || !isAdmin) return null
@@ -224,6 +234,117 @@ export default function AdminPage() {
                 <tr>
                   <td colSpan={7} className="px-3 py-4 text-center text-sm text-muted">
                     No custom roles yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="mb-2 text-sm font-medium text-muted">Invite members</h2>
+        <p className="mb-2 text-xs text-muted">
+          No SMTP is configured — the invited email just needs to sign in (or self-register, since the Keycloak realm
+          allows it) and they join this org automatically on first login.
+        </p>
+        <form
+          aria-label="Invite a member"
+          className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            setInviteError(null)
+            try {
+              await createInvitation.mutateAsync({ email: inviteEmail, platformRole: inviteRole })
+              setInviteEmail('')
+              await refetchInvitations()
+            } catch (err) {
+              setInviteError(err instanceof Error ? err.message : 'Failed to create invitation')
+            }
+          }}
+        >
+          <div className="flex flex-col gap-1">
+            <label htmlFor="invite-email" className="text-xs text-muted">
+              Email
+            </label>
+            <input
+              id="invite-email"
+              type="email"
+              required
+              aria-required="true"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              className="w-56 rounded border border-border bg-transparent px-2 py-1 text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="invite-role" className="text-xs text-muted">
+              Platform role
+            </label>
+            <select
+              id="invite-role"
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}
+              className="rounded border border-border bg-transparent px-2 py-1 text-xs"
+            >
+              <option value="admin">admin</option>
+              <option value="reviewer">reviewer</option>
+              <option value="analyst">analyst</option>
+              <option value="viewer">viewer</option>
+            </select>
+          </div>
+          <Button type="submit" variant="primary" disabled={createInvitation.isPending}>
+            {createInvitation.isPending ? 'Inviting…' : 'Send invite'}
+          </Button>
+        </form>
+
+        {inviteError && (
+          <div role="alert" className="mb-2 rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
+            {inviteError}
+          </div>
+        )}
+        {invitations.isError && (
+          <div role="alert" className="mb-2 rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
+            {invitations.error.message}
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted">
+                <th className="border-b border-border px-3 py-2">Email</th>
+                <th className="border-b border-border px-3 py-2">Role</th>
+                <th className="border-b border-border px-3 py-2">Status</th>
+                <th className="border-b border-border px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitations.data?.map((invite) => (
+                <tr key={invite.id}>
+                  <td className="border-b border-border px-3 py-2 font-medium">{invite.email}</td>
+                  <td className="border-b border-border px-3 py-2 text-xs text-muted">{invite.platformRole}</td>
+                  <td className="border-b border-border px-3 py-2">
+                    <Badge tone={invite.expired ? 'critical' : 'safe'}>{invite.expired ? 'Expired' : 'Pending'}</Badge>
+                  </td>
+                  <td className="border-b border-border px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      className="text-xs text-critical underline"
+                      onClick={async () => {
+                        await revokeInvitation.mutateAsync({ invitationId: invite.id })
+                        await refetchInvitations()
+                      }}
+                    >
+                      Revoke
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {invitations.data?.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-3 py-4 text-center text-sm text-muted">
+                    No pending invitations.
                   </td>
                 </tr>
               )}

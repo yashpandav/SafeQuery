@@ -360,13 +360,44 @@ audit log (an action that already existed in `AuditAction`, unused until now). `
 "Rate limits" panel is a single org-wide form (enabled toggle + two number inputs), not a per-row table
 like the roles/connections/environments sections above it, since there's exactly one policy per org.
 
-**`organization.list`** (`src/trpc/routers/organization.ts`, `listMyOrganizations()` in
-`src/lib/organization-pipeline.ts`) — `authedProcedure`, not `orgProcedure`: the caller doesn't have an
-org selected yet when they need this (it's how the web client lets them pick one). Joins
-`organization_members` (by `userId`) to `organizations` (by the resulting `orgId`s) and returns
-`{ id, name, slug, platformRole }` per org. No Cerbos check — unlike `query`/`approval_request`/
+**`organization.list`/`.create`** (`src/trpc/routers/organization.ts`,
+`src/lib/organization-pipeline.ts`) — SQ-015. `list` is `authedProcedure`, not `orgProcedure`: the
+caller doesn't have an org selected yet when they need this (it's how the web client lets them pick
+one). Joins `organization_members` (by `userId`) to `organizations` (by the resulting `orgId`s) and
+returns `{ id, name, slug, platformRole }` per org. No Cerbos check — unlike `query`/`approval_request`/
 `database_connection`, "which orgs am I a member of" isn't a resource-access decision Cerbos models;
-membership rows are the only source of truth, the same ones `orgProcedure` itself reads on every request.
+membership rows are the only source of truth, the same ones `orgProcedure` itself reads on every
+request. `create` is the same `authedProcedure` for the same reason — there's no existing org to scope
+a Cerbos `org_id` check against yet. Inserts the `organizations` row plus an `organizationMembers` row
+with `platformRole: 'owner'` for the caller in one call, audited as `ORGANIZATION_CREATED` +
+`MEMBER_ADDED` (two events, not one — mirrors `QUERY_SUBMITTED`/`QUERY_EXECUTED` being separate even
+though one usually follows the other). `apps/web/app/login/page.tsx`'s "no orgs yet" state now has a
+real create-organization form (name + slug, slug auto-derived from name unless manually edited)
+instead of a dead-end message pointing at the seed script.
+
+**`invitation.list`/`.create`/`.revoke`** (`src/trpc/routers/invitation.ts`,
+`src/lib/invitation-pipeline.ts`) — SQ-016, gated by a new `invitation.yaml` Cerbos policy
+(`same_org_admin` only, matching `custom_role.yaml`/`environment.yaml`/`policy.yaml`). **Deliberately
+has no Keycloak Admin REST API integration and no email delivery** — neither exists anywhere in this
+codebase yet, and adding a `@keycloak/keycloak-admin-client` dependency + service-account credentials
+just to eagerly provision a Keycloak user record would be a much bigger lift than the rest of this
+ticket for no functional gain, since the realm already has `registrationAllowed: true`
+(`infra/docker/keycloak/safequery-realm.json`) — the invited person can self-register (or already have
+an account) under the same email through the existing dev-shortcut login page with zero new
+infrastructure. `create` inserts an `invitations` row (email lowercased for a case-insensitive match
+later, 7-day expiry, a random `token` that's stored for schema-completeness/future use but not consumed
+by any code path today) and audits `USER_INVITED`. The actual acceptance isn't a separate endpoint —
+**`auth.exchangeToken`** calls the new `acceptPendingInvitations()` right after the `users` upsert, on
+every login: it matches the verified Keycloak email (case-insensitively) against pending, unexpired
+invitations across *all* orgs, joins the user to each one (skipping orgs they're already a member of,
+so an admin re-inviting an existing member doesn't crash on the `organization_members` composite-key
+insert), and always consumes (deletes) the invitation row either way — then the pre-existing
+per-membership `USER_LOGIN` audit loop runs afterward and naturally picks up the newly joined org(s)
+too, since it queries memberships fresh. No Cerbos check on `acceptPendingInvitations` for the same
+reason as `organization.list`: "do I have a pending invitation for my own email" isn't a resource-access
+decision. `apps/web/app/admin/page.tsx`'s "Invite members" panel lists pending/expired invitations and
+lets an admin send a new one or revoke a pending one; there's no token-based "click to accept" link in
+the UI since the auto-accept-on-login design never needed one.
 
 **`databaseConnection.create`/`.list`/`.captureSchema`** (`src/trpc/routers/database-connection.ts`,
 `src/lib/connection-pipeline.ts`) — SQ-019/020/021/022. `create` enqueues a `test_connection` job (which
@@ -652,6 +683,8 @@ Policy files follow Cerbos `api.cerbos.dev/v1` schema:
 - `policy.yaml` — `same_org_admin`-only `read`/`update` on the org-wide `policies` table rows (rate
   limits today; PII/time policy knobs could follow the same shape later), matching
   `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`'s pure-RBAC pattern.
+- `invitation.yaml` — `same_org_admin`-only `create`/`read`/`delete` on pending member invitations,
+  same pure-RBAC pattern as the above.
 
 ### Keycloak (`infra/docker/keycloak/safequery-realm.json`)
 Realm `safequery`, client `safequery-web` (public PKCE), client `safequery-api` (confidential).
@@ -687,7 +720,7 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
 | P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
-| P2 | Governance | ✅ Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059) all done — `apps/web/app/admin` + `apps/web/app/audit-log`. Still 🔲: multi-tenancy UI (org switcher/invite flow, SQ-016) |
+| P2 | Governance | ✅ **Complete.** Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059), org creation + invite flow (SQ-015/SQ-016) all done — `apps/web/app/admin` + `apps/web/app/audit-log` + `apps/web/app/login`. |
 | P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
@@ -705,13 +738,16 @@ schema snapshots to work with, instead of requiring hand-seeded fixtures. None o
 **What's still simplified vs. the canonical spec, by design, for P1:** `apps/tre-executor` is a plain
 TypeScript module `apps/tre-dispatcher` calls in-process — not yet its own `worker_threads`/container
 boundary (Phase 3). `apps/web` now has a chat UI (analyst), a real reviewer queue (`approval.list`),
-live org selection (`organization.list`), an audit log viewer with tamper detection
+live org selection and creation (`organization.list`/`.create`), an invite flow
+(`invitation.*`/`auth.exchangeToken`'s auto-accept), an audit log viewer with tamper detection
 (`audit.list`/`audit.verifyIntegrity`), and an admin workspace-settings dashboard with live custom-roles
 CRUD and environment policy posture (`customRole.*`/`environment.*`/`dashboard.summary`) — covering all
 four risk paths end-to-end with nothing manually-pasted — but auth is still the dev-only Keycloak direct
-grant rather than the full OIDC redirect + PKCE flow the canonical spec describes. See
-`Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042 — all done (SQ-017/SQ-018/SQ-058 from P2 also
-done, ahead of their phase).
+grant rather than the full OIDC redirect + PKCE flow the canonical spec describes, and there's still no
+Keycloak Admin REST API integration anywhere (invites rely on the realm's existing self-registration
+instead). See `Docs/04_FEATURE_TICKET_LIST.md` tickets SQ-025 to SQ-042 — all done (SQ-015/SQ-016/
+SQ-017/SQ-018/SQ-046/SQ-054/SQ-058/SQ-059 from P2 also done, ahead of their phase — P2 is now fully
+complete).
 
 ---
 

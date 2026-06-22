@@ -21,19 +21,42 @@ async function getKeycloakToken(email: string, password: string): Promise<string
   return json.access_token
 }
 
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [awaitingOrgSelection, setAwaitingOrgSelection] = useState(false)
+  const [orgName, setOrgName] = useState('')
+  const [orgSlug, setOrgSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [createOrgError, setCreateOrgError] = useState<string | null>(null)
   const router = useRouter()
   const trpc = useTRPC()
   const { session, setSession } = useSession()
   const exchangeToken = useMutation(trpc.auth.exchangeToken.mutationOptions())
+  const createOrganization = useMutation(trpc.organization.create.mutationOptions())
   const organizations = useQuery({
     ...trpc.organization.list.queryOptions(),
     enabled: awaitingOrgSelection && Boolean(session),
   })
+
+  async function handleCreateOrg(e: FormEvent) {
+    e.preventDefault()
+    setCreateOrgError(null)
+    try {
+      const org = await createOrganization.mutateAsync({ name: orgName, slug: orgSlug })
+      selectOrganization(org.id, org.platformRole)
+    } catch (err) {
+      setCreateOrgError(err instanceof Error ? err.message : 'Failed to create organization')
+    }
+  }
 
   async function handleCredentialsSubmit(e: FormEvent) {
     e.preventDefault()
@@ -74,10 +97,55 @@ export default function LoginPage() {
           </div>
         )}
         {organizations.data?.length === 0 && (
-          <p className="text-sm text-muted">
-            You are not a member of any organization yet. Ask an Owner/Admin to invite you, or run{' '}
-            <code className="text-xs">pnpm --filter @repo/db db:seed</code>.
-          </p>
+          <div className="mb-4 flex flex-col gap-3">
+            <p className="text-sm text-muted">
+              You are not a member of any organization yet. Ask an Owner/Admin to invite you, or create your own below.
+            </p>
+            <form onSubmit={handleCreateOrg} aria-label="Create an organization" className="flex flex-col gap-3 rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="org-name" className="text-sm text-muted">
+                  Organization name
+                </label>
+                <input
+                  id="org-name"
+                  type="text"
+                  required
+                  aria-required="true"
+                  value={orgName}
+                  onChange={(e) => {
+                    setOrgName(e.target.value)
+                    if (!slugTouched) setOrgSlug(slugify(e.target.value))
+                  }}
+                  className="rounded-lg border border-border bg-transparent px-3 py-2"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="org-slug" className="text-sm text-muted">
+                  Slug
+                </label>
+                <input
+                  id="org-slug"
+                  type="text"
+                  required
+                  aria-required="true"
+                  value={orgSlug}
+                  onChange={(e) => {
+                    setSlugTouched(true)
+                    setOrgSlug(e.target.value)
+                  }}
+                  className="rounded-lg border border-border bg-transparent px-3 py-2"
+                />
+              </div>
+              {createOrgError && (
+                <div role="alert" className="rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
+                  {createOrgError}
+                </div>
+              )}
+              <Button type="submit" variant="primary" disabled={createOrganization.isPending}>
+                {createOrganization.isPending ? 'Creating…' : 'Create organization'}
+              </Button>
+            </form>
+          </div>
         )}
         <ul className="flex flex-col gap-2">
           {organizations.data?.map((org) => (

@@ -57,6 +57,11 @@ export interface PolicyResourceAttrs {
   orgId: string
 }
 
+export interface InvitationResourceAttrs {
+  id: string
+  orgId: string
+}
+
 export interface DbTablePrincipalAttrs {
   tableScope: string[]
   capabilities: DbTableAction[]
@@ -93,6 +98,8 @@ export type EnvironmentAction = 'create' | 'read' | 'update' | 'delete'
 export type DashboardAction = 'read'
 
 export type PolicyAction = 'read' | 'update'
+
+export type InvitationAction = 'create' | 'read' | 'delete'
 
 export type DecisionMap<T extends string> = Record<T, boolean>
 

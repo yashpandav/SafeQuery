@@ -1,0 +1,14 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "invitation"
+  importDerivedRoles:
+    - common_roles
+
+  rules:
+    # ── Only admins and owners can invite members or revoke a pending invite — matches
+    #    custom_role.yaml/environment.yaml/policy.yaml's pure-RBAC pattern ──
+    - actions: ["create", "read", "delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]

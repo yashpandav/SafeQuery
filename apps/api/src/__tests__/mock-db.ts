@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { customRoles, environments, queryLogs, approvalRequests, policies } from '@repo/db/schema'
+import { customRoles, environments, queryLogs, approvalRequests, policies, invitations } from '@repo/db/schema'
 
 export interface MockDbFixtures {
   organizationMembers?: unknown
@@ -10,6 +10,7 @@ export interface MockDbFixtures {
   approvalRequests?: unknown
   queryLogs?: unknown
   policies?: unknown
+  invitations?: unknown
   approvalRequestsList?: unknown[]
   queryLogsList?: unknown[]
   organizationMembersList?: unknown[]
@@ -18,6 +19,7 @@ export interface MockDbFixtures {
   usersList?: unknown[]
   customRolesList?: unknown[]
   environmentsList?: unknown[]
+  invitationsList?: unknown[]
 }
 
 export function createMockDb(fixtures: MockDbFixtures) {
@@ -60,6 +62,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
     if (table === queryLogs) return fixtures.queryLogs as Record<string, unknown> | undefined
     if (table === approvalRequests) return fixtures.approvalRequests as Record<string, unknown> | undefined
     if (table === policies) return fixtures.policies as Record<string, unknown> | undefined
+    if (table === invitations) return fixtures.invitations as Record<string, unknown> | undefined
     return undefined
   }
 
@@ -115,6 +118,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
       approvalRequests: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       queryLogs: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       policies: { findFirst: () => Promise<unknown> }
+      invitations: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       auditLogs: { findMany: () => Promise<unknown[]> }
       users: { findMany: () => Promise<unknown[]> }
     }
@@ -153,6 +157,10 @@ export function createMockDb(fixtures: MockDbFixtures) {
         findMany: async () => fixtures.queryLogsList ?? [],
       },
       policies: { findFirst: async () => fixtures.policies ?? null },
+      invitations: {
+        findFirst: async () => fixtures.invitations ?? null,
+        findMany: async () => fixtures.invitationsList ?? [],
+      },
       auditLogs: { findMany: async () => fixtures.auditLogsList ?? [] },
       users: { findMany: async () => fixtures.usersList ?? [] },
     },

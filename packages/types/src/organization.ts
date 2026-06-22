@@ -40,3 +40,8 @@ export const CreateInvitationSchema = z.object({
   platformRole: PlatformRole,
 })
 export type CreateInvitation = z.infer<typeof CreateInvitationSchema>
+
+export const RevokeInvitationSchema = z.object({
+  invitationId: z.string().uuid(),
+})
+export type RevokeInvitation = z.infer<typeof RevokeInvitationSchema>

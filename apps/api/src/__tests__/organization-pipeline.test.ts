@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { listMyOrganizations } from '../lib/organization-pipeline'
+import { organizations, organizationMembers, auditLogs } from '@repo/db/schema'
+import { listMyOrganizations, createOrganization } from '../lib/organization-pipeline'
 import { createMockDb, type MockDbFixtures } from './mock-db'
 
 const USER_ID = 'user-1'
@@ -50,5 +51,18 @@ describe('listMyOrganizations', () => {
     const result = await listMyOrganizations({ db: db as never }, USER_ID)
 
     expect(result).toEqual([{ id: ORG_A, name: 'Acme Corp', slug: 'acme-corp', platformRole: 'admin' }])
+  })
+})
+
+describe('createOrganization', () => {
+  it('creates the org, an owner membership for the caller, and audits both (SQ-015)', async () => {
+    const { db, insertedByTable } = createMockDb({})
+
+    const result = await createOrganization({ db: db as never }, USER_ID, { name: 'Acme Corp', slug: 'acme-corp' })
+
+    expect(result).toMatchObject({ name: 'Acme Corp', slug: 'acme-corp', platformRole: 'owner' })
+    expect(insertedByTable.get(organizations)?.[0]).toMatchObject({ name: 'Acme Corp', slug: 'acme-corp' })
+    expect(insertedByTable.get(organizationMembers)?.[0]).toMatchObject({ orgId: result.id, userId: USER_ID, platformRole: 'owner' })
+    expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['ORGANIZATION_CREATED', 'MEMBER_ADDED'])
   })
 })

@@ -6,6 +6,7 @@ import { verifyKeycloakToken, signSession } from '@repo/auth'
 import { users, organizationMembers } from '@repo/db/schema'
 import { writeAuditLog } from '@repo/audit'
 import { createTRPCRouter, baseProcedure, authedProcedure } from '../init'
+import { acceptPendingInvitations } from '../../lib/invitation-pipeline'
 import { env } from '../../env'
 
 export const authRouter = createTRPCRouter({
@@ -40,6 +41,8 @@ export const authRouter = createTRPCRouter({
         .returning()
 
       if (!user) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
+
+      await acceptPendingInvitations({ db: ctx.db }, user.id, user.email)
 
       const sessionId = randomUUID()
       const sessionToken = await signSession(
