@@ -44,7 +44,7 @@ describe('handleCaptureSchema', () => {
         rows: [{ table_name: 'customers', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' }],
       }),
     })
-    const result = await handleCaptureSchema({ type: 'capture_schema', connection }, () => client)
+    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, () => client)
 
     expect(result.success).toBe(true)
     expect(result.snapshot).toEqual({ customers: [{ column: 'id', type: 'uuid', nullable: false, isPii: false }] })
@@ -52,7 +52,7 @@ describe('handleCaptureSchema', () => {
 
   it('returns failure when the connection cannot be established', async () => {
     const { client } = createFakeClient({ failConnect: new Error('no route to host') })
-    const result = await handleCaptureSchema({ type: 'capture_schema', connection }, () => client)
+    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, () => client)
 
     expect(result.success).toBe(false)
     expect(result.error).toContain('no route to host')

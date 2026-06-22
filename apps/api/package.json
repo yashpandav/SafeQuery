@@ -20,6 +20,7 @@
     "@repo/audit": "workspace:*",
     "@repo/auth": "workspace:*",
     "@repo/db": "workspace:*",
+    "@repo/logger": "workspace:*",
     "@repo/policy-client": "workspace:*",
     "@repo/queue": "workspace:*",
     "@repo/rate-limit": "workspace:*",

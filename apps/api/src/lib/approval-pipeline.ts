@@ -1,6 +1,6 @@
 import { eq, and, desc, inArray } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
-import { approvalRequests, queryLogs, databaseConnections } from '@repo/db/schema'
+import { approvalRequests, queryLogs, databaseConnections, users } from '@repo/db/schema'
 import type { DbClient } from '@repo/db'
 import type { CerbosClient, CerbosPrincipal } from '@repo/policy-client'
 import { checkApproval, filterReadableApprovals } from '@repo/policy-client'
@@ -16,6 +16,7 @@ export interface ApprovalReadDeps {
 
 export interface ApprovalPipelineDeps extends ApprovalReadDeps {
   executionQueue: ExecutionQueueClient
+  verifyReauthToken: (token: string) => Promise<{ sub: string }>
 }
 
 export interface ApprovalPrincipal {
@@ -83,6 +84,7 @@ export interface DecideApprovalInput {
   approvalRequestId: string
   decision: 'APPROVED' | 'REJECTED'
   note?: string
+  reauthToken: string
 }
 
 export interface DecideApprovalResult {
@@ -92,11 +94,40 @@ export interface DecideApprovalResult {
   rowCount: number | null
   error: string | null
 }
+
+async function assertReauthenticated(deps: ApprovalPipelineDeps, principal: ApprovalPrincipal, input: DecideApprovalInput): Promise<void> {
+  async function fail(): Promise<never> {
+    await writeAuditLog(deps.db, {
+      orgId: principal.orgId,
+      actorId: principal.userId,
+      action: 'REAUTHENTICATION_FAILED',
+      resourceType: 'approval_request',
+      resourceId: input.approvalRequestId,
+      metadata: {},
+    })
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Re-authentication failed — please confirm your password to decide this request' })
+  }
+
+  let verified: { sub: string }
+  try {
+    verified = await deps.verifyReauthToken(input.reauthToken)
+  } catch {
+    return fail()
+  }
+
+  const user = await deps.db.query.users.findFirst({ where: eq(users.id, principal.userId) })
+  if (!user || user.keycloakId !== verified.sub) {
+    return fail()
+  }
+}
+
 export async function decideApproval(
   deps: ApprovalPipelineDeps,
   principal: ApprovalPrincipal,
   input: DecideApprovalInput,
 ): Promise<DecideApprovalResult> {
+  await assertReauthenticated(deps, principal, input)
+
   const approval = await deps.db.query.approvalRequests.findFirst({
     where: and(eq(approvalRequests.id, input.approvalRequestId), eq(approvalRequests.orgId, principal.orgId)),
   })
@@ -154,6 +185,7 @@ export async function decideApproval(
   }
   const writeResult = await deps.executionQueue.run({
     type: JOB_NAMES.EXECUTE_WRITE,
+    orgId: principal.orgId,
     connection: target,
     sql: queryLog.generatedSql,
     dryRun: false,

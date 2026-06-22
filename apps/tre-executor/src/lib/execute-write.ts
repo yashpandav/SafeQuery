@@ -2,6 +2,12 @@ import type { Client } from 'pg'
 import type { ExecuteWriteJobData, ExecuteWriteJobResult } from '@repo/queue'
 import { defaultClientFactory, type ClientFactory } from './pg-client'
 import { env } from '../env'
+import { logger } from '../logger'
+
+function connectionContext(data: ExecuteWriteJobData) {
+  return { host: data.connection.host, port: data.connection.port, database: data.connection.database, dryRun: data.dryRun }
+}
+
 export async function handleExecuteWrite(
   data: ExecuteWriteJobData,
   clientFactory: ClientFactory = defaultClientFactory,
@@ -18,19 +24,23 @@ export async function handleExecuteWrite(
     const result = await client.query(`${data.sql} RETURNING *`)
     await client.query(data.dryRun ? 'ROLLBACK' : 'COMMIT')
 
+    const executionMs = Date.now() - start
+    logger.info({ ...connectionContext(data), affectedRows: result.rowCount ?? 0, executionMs }, 'execute_write completed')
     return {
       success: true,
       error: null,
       affectedRows: result.rowCount ?? 0,
       previewRows: result.rows,
-      executionMs: Date.now() - start,
+      executionMs,
       committed: !data.dryRun,
     }
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {})
+    const error = err instanceof Error ? err.message : 'Write execution failed'
+    logger.error({ ...connectionContext(data), err: error }, 'execute_write failed')
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Write execution failed',
+      error,
       affectedRows: 0,
       previewRows: [],
       executionMs: Date.now() - start,

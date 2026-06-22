@@ -14,6 +14,7 @@ const connection: ConnectionTarget = {
 function baseJob(overrides: Partial<ExecuteWriteJobData> = {}): ExecuteWriteJobData {
   return {
     type: 'execute_write',
+    orgId: 'org-1',
     connection,
     sql: "UPDATE customers SET status = 'inactive' WHERE id = 1",
     dryRun: true,

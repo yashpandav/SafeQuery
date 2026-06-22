@@ -19,5 +19,6 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
 export const ApprovalDecisionSchema = z.object({
   decision: z.enum(['APPROVED', 'REJECTED']),
   note: z.string().max(1000).optional(),
+  reauthToken: z.string().min(1, 'Re-authentication is required to decide an approval request'),
 })
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>

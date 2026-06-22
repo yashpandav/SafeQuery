@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "paths": {
+      "@repo/logger": ["../../packages/logger/src/index.ts"],
       "@repo/queue": ["../../packages/queue/src/index.ts"],
       "@repo/tre-executor": ["../tre-executor/src/index.ts"]
     }

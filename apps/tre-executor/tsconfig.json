@@ -2,6 +2,7 @@
   "extends": "@repo/typescript-config/node-library.json",
   "compilerOptions": {
     "paths": {
+      "@repo/logger": ["../../packages/logger/src/index.ts"],
       "@repo/queue": ["../../packages/queue/src/index.ts"],
       "@repo/secrets": ["../../packages/secrets/src/index.ts"]
     }

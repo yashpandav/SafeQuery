@@ -5,6 +5,7 @@ import type { TestConnectionJobData } from '@repo/queue'
 
 const baseData: TestConnectionJobData = {
   type: 'test_connection',
+  orgId: 'org-1',
   host: 'localhost',
   port: 5432,
   database: 'demo',

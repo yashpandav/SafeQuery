@@ -253,6 +253,7 @@ export async function submitQuery(
   if (validated.riskLevel === 'SAFE') {
     const jobResult = await deps.executionQueue.run({
       type: JOB_NAMES.EXECUTE_READ,
+      orgId: principal.orgId,
       connection: target,
       sql,
       rowCap: customRole.config.rowCap,
@@ -296,6 +297,7 @@ export async function submitQuery(
   } else if (validated.riskLevel === 'WARNING') {
     const explainJob = await deps.executionQueue.run({
       type: JOB_NAMES.EXECUTE_READ,
+      orgId: principal.orgId,
       connection: target,
       sql,
       rowCap: customRole.config.rowCap,
@@ -329,7 +331,7 @@ export async function submitQuery(
       })
     }
   } else if (validated.riskLevel === 'CRITICAL') {
-    const dryRun = await deps.executionQueue.run({ type: JOB_NAMES.EXECUTE_WRITE, connection: target, sql, dryRun: true })
+    const dryRun = await deps.executionQueue.run({ type: JOB_NAMES.EXECUTE_WRITE, orgId: principal.orgId, connection: target, sql, dryRun: true })
     if (dryRun.success) {
       simulation = {
         type: 'dry_run',
@@ -411,6 +413,7 @@ export async function acknowledgeQuery(
   }
   const jobResult = await deps.executionQueue.run({
     type: JOB_NAMES.EXECUTE_READ,
+    orgId: principal.orgId,
     connection: target,
     sql: queryLog.generatedSql,
     rowCap: queryLog.rowCap,

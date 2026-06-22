@@ -3,6 +3,11 @@ import Cursor from 'pg-cursor'
 import type { ExecuteReadJobData, ExecuteReadJobResult } from '@repo/queue'
 import { defaultClientFactory, type ClientFactory } from './pg-client'
 import { env } from '../env'
+import { logger } from '../logger'
+
+function connectionContext(data: ExecuteReadJobData) {
+  return { host: data.connection.host, port: data.connection.port, database: data.connection.database, explainOnly: Boolean(data.explainOnly) }
+}
 
 const MASK_VALUE = '***MASKED***'
 export function maskRow(row: Record<string, unknown>, maskedColumns: string[]): Record<string, unknown> {
@@ -40,6 +45,9 @@ export async function handleExecuteRead(
       const explainResult = await client.query(`EXPLAIN (FORMAT JSON) ${data.sql}`)
       await client.query('ROLLBACK')
       const plan = extractPlanRoot(explainResult.rows[0])
+      const estimatedRowCount = typeof plan?.['Plan Rows'] === 'number' ? plan['Plan Rows'] : null
+      const executionMs = Date.now() - start
+      logger.info({ ...connectionContext(data), estimatedRowCount, executionMs }, 'execute_read (explain) completed')
       return {
         success: true,
         error: null,
@@ -48,9 +56,9 @@ export async function handleExecuteRead(
         rowCount: 0,
         truncated: false,
         maskedColumns: data.maskedColumns,
-        executionMs: Date.now() - start,
+        executionMs,
         plan: plan ? JSON.stringify(plan) : null,
-        estimatedRowCount: typeof plan?.['Plan Rows'] === 'number' ? plan['Plan Rows'] : null,
+        estimatedRowCount,
       }
     }
 
@@ -64,6 +72,8 @@ export async function handleExecuteRead(
     const maskedRows = limitedRows.map((row) => maskRow(row, data.maskedColumns))
     const columns = maskedRows[0] ? Object.keys(maskedRows[0]) : []
 
+    const executionMs = Date.now() - start
+    logger.info({ ...connectionContext(data), rowCount: maskedRows.length, truncated, executionMs }, 'execute_read completed')
     return {
       success: true,
       error: null,
@@ -72,14 +82,16 @@ export async function handleExecuteRead(
       rowCount: maskedRows.length,
       truncated,
       maskedColumns: data.maskedColumns,
-      executionMs: Date.now() - start,
+      executionMs,
       plan: null,
       estimatedRowCount: null,
     }
   } catch (err) {
+    const error = err instanceof Error ? err.message : 'Query execution failed'
+    logger.error({ ...connectionContext(data), err: error }, 'execute_read failed')
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Query execution failed',
+      error,
       columns: [],
       rows: [],
       rowCount: 0,

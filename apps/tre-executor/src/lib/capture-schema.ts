@@ -1,6 +1,12 @@
 import type { Client } from 'pg'
 import type { CaptureSchemaJobData, CaptureSchemaJobResult, ColumnDefinition } from '@repo/queue'
 import { defaultClientFactory, type ClientFactory } from './pg-client'
+import { logger } from '../logger'
+
+function connectionContext(data: CaptureSchemaJobData) {
+  return { host: data.connection.host, port: data.connection.port, database: data.connection.database }
+}
+
 const PII_COLUMN_PATTERN = /email|phone|ssn|social_security|credit_card|password|street_address|date_of_birth|\bdob\b|national_id/i
 
 interface InformationSchemaRow {
@@ -38,9 +44,13 @@ export async function handleCaptureSchema(
       WHERE table_schema = 'public'
       ORDER BY table_name, ordinal_position
     `)
-    return { success: true, error: null, snapshot: buildSnapshot(result.rows) }
+    const snapshot = buildSnapshot(result.rows)
+    logger.info({ ...connectionContext(data), tableCount: Object.keys(snapshot).length }, 'capture_schema completed')
+    return { success: true, error: null, snapshot }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : 'Schema discovery failed', snapshot: null }
+    const error = err instanceof Error ? err.message : 'Schema discovery failed'
+    logger.error({ ...connectionContext(data), err: error }, 'capture_schema failed')
+    return { success: false, error, snapshot: null }
   } finally {
     await client.end().catch(() => {})
   }

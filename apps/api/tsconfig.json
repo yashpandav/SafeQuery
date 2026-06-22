@@ -8,6 +8,7 @@
       "@repo/db": ["../../packages/db/src/index.ts"],
       "@repo/db/schema": ["../../packages/db/src/schema/index.ts"],
       "@repo/db/client": ["../../packages/db/src/client.ts"],
+      "@repo/logger": ["../../packages/logger/src/index.ts"],
       "@repo/policy-client": ["../../packages/policy-client/src/index.ts"],
       "@repo/queue": ["../../packages/queue/src/index.ts"],
       "@repo/rate-limit": ["../../packages/rate-limit/src/index.ts"],

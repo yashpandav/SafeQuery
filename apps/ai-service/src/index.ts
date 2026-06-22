@@ -6,6 +6,7 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express'
 import { appRouter } from './trpc/routers/_app'
 import { createTRPCContext } from './trpc/init'
 import { env } from './env'
+import { logger } from './logger'
 
 const app = express()
 
@@ -20,7 +21,7 @@ app.use(
     createContext: ({ req, res }) => createTRPCContext({ req, res }),
     onError({ error, path }) {
       if (error.code === 'INTERNAL_SERVER_ERROR') {
-        console.error(`[tRPC] Internal error on ${path ?? 'unknown'}:`, error.message)
+        logger.error({ path: path ?? 'unknown', err: error.message }, 'tRPC internal error')
       }
     },
   }),
@@ -31,8 +32,5 @@ app.get('/health', (_req, res) => {
 })
 
 app.listen(env.PORT, () => {
-  console.log(`SafeQuery AI service running on http://localhost:${env.PORT}`)
-  console.log(`  tRPC endpoint: http://localhost:${env.PORT}/trpc`)
-  console.log(`  Generation model: ${env.AI_MODEL}`)
-  console.log(`  Screening model:  ${env.AI_SCREEN_MODEL}`)
+  logger.info({ port: env.PORT, generationModel: env.AI_MODEL, screeningModel: env.AI_SCREEN_MODEL }, 'SafeQuery AI service running')
 })

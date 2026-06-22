@@ -14,6 +14,7 @@ const connection: ConnectionTarget = {
 function baseJob(overrides: Partial<ExecuteReadJobData> = {}): ExecuteReadJobData {
   return {
     type: 'execute_read',
+    orgId: 'org-1',
     connection,
     sql: 'SELECT id, email FROM customers LIMIT 10',
     rowCap: 5,

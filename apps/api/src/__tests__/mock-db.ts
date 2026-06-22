@@ -11,6 +11,7 @@ export interface MockDbFixtures {
   queryLogs?: unknown
   policies?: unknown
   invitations?: unknown
+  users?: unknown
   approvalRequestsList?: unknown[]
   queryLogsList?: unknown[]
   organizationMembersList?: unknown[]
@@ -53,9 +54,6 @@ export function createMockDb(fixtures: MockDbFixtures) {
     return builder
   }
 
-  // Falls back to the relevant findFirst-style fixture when a test calls update() without first
-  // having inserted a row for this table (e.g. update-after-findFirst, as opposed to the
-  // insert-then-update pattern the rest of this mock was originally built around).
   function fallbackRowFor(table: unknown): Record<string, unknown> | undefined {
     if (table === customRoles) return fixtures.customRoles as Record<string, unknown> | undefined
     if (table === environments) return fixtures.environments as Record<string, unknown> | undefined
@@ -120,7 +118,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
       policies: { findFirst: () => Promise<unknown> }
       invitations: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
       auditLogs: { findMany: () => Promise<unknown[]> }
-      users: { findMany: () => Promise<unknown[]> }
+      users: { findFirst: () => Promise<unknown>; findMany: () => Promise<unknown[]> }
     }
     select: () => ReturnType<typeof chainableSelect>
     insert: (table: unknown) => ReturnType<typeof chainableInsert>
@@ -162,7 +160,10 @@ export function createMockDb(fixtures: MockDbFixtures) {
         findMany: async () => fixtures.invitationsList ?? [],
       },
       auditLogs: { findMany: async () => fixtures.auditLogsList ?? [] },
-      users: { findMany: async () => fixtures.usersList ?? [] },
+      users: {
+        findFirst: async () => fixtures.users ?? null,
+        findMany: async () => fixtures.usersList ?? [],
+      },
     },
     select: () => chainableSelect(),
     insert: (table: unknown) => chainableInsert(table),

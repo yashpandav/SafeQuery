@@ -11,13 +11,20 @@ import type { CerbosClient, CerbosCheckResourceResult } from '@repo/policy-clien
 const ORG_ID = 'org-1'
 const SUBMITTER_ID = 'analyst-1'
 const REVIEWER_ID = 'reviewer-1'
+const REVIEWER_KEYCLOAK_ID = 'kc-reviewer-1'
 const APPROVAL_ID = 'approval-1'
 const QUERY_LOG_ID = 'query-1'
 const CONNECTION_ID = 'conn-1'
+const VALID_REAUTH_TOKEN = 'valid-reauth-token'
 
 const reviewer: ApprovalPrincipal = { userId: REVIEWER_ID, orgId: ORG_ID, platformRole: 'reviewer' }
 const submitter: ApprovalPrincipal = { userId: SUBMITTER_ID, orgId: ORG_ID, platformRole: 'analyst' }
 const submitterAsReviewer: ApprovalPrincipal = { userId: SUBMITTER_ID, orgId: ORG_ID, platformRole: 'reviewer' }
+
+function verifyReauthToken(token: string): Promise<{ sub: string }> {
+  if (token !== VALID_REAUTH_TOKEN) return Promise.reject(new Error('invalid or expired token'))
+  return Promise.resolve({ sub: REVIEWER_KEYCLOAK_ID })
+}
 
 function createSubmitterOnlyCerbosClient(): CerbosClient {
   return {
@@ -46,6 +53,7 @@ function baseFixtures(): MockDbFixtures {
     approvalRequests: { id: APPROVAL_ID, orgId: ORG_ID, queryLogId: QUERY_LOG_ID, status: 'PENDING' },
     queryLogs: { id: QUERY_LOG_ID, orgId: ORG_ID, userId: SUBMITTER_ID, connectionId: CONNECTION_ID, generatedSql: 'DELETE FROM customers WHERE id = 1' },
     databaseConnections: { id: CONNECTION_ID, orgId: ORG_ID, host: 'localhost', port: 5432, database: 'demo', ssl: false, encryptedCredentials: 'envelope' },
+    users: { id: REVIEWER_ID, keycloakId: REVIEWER_KEYCLOAK_ID },
   }
 }
 function createFourEyesCerbosClient(orgId: string): CerbosClient {
@@ -81,9 +89,9 @@ describe('decideApproval', () => {
     const { db, updatedByTable, insertedByTable } = createMockDb(baseFixtures())
     const { client: executionQueue, calls } = createMockExecutionQueue()
     const result = await decideApproval(
-      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue },
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
       reviewer,
-      { approvalRequestId: APPROVAL_ID, decision: 'REJECTED', note: 'too risky' },
+      { approvalRequestId: APPROVAL_ID, decision: 'REJECTED', note: 'too risky', reauthToken: VALID_REAUTH_TOKEN },
     )
 
     expect(result).toMatchObject({ status: 'REJECTED', executed: false })
@@ -97,9 +105,9 @@ describe('decideApproval', () => {
     const { db, updatedByTable, insertedByTable } = createMockDb(baseFixtures())
     const { client: executionQueue, calls } = createMockExecutionQueue()
     const result = await decideApproval(
-      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue },
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
       reviewer,
-      { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
+      { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
     )
 
     expect(result).toMatchObject({ status: 'APPROVED', executed: true, rowCount: 1 })
@@ -116,9 +124,9 @@ describe('decideApproval', () => {
       [JOB_NAMES.EXECUTE_WRITE]: { success: false, error: 'deadlock detected', affectedRows: 0, previewRows: [], executionMs: 1, committed: false },
     })
     const result = await decideApproval(
-      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue },
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
       reviewer,
-      { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
+      { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
     )
 
     expect(result).toMatchObject({ status: 'APPROVED', executed: false, error: 'deadlock detected' })
@@ -131,9 +139,9 @@ describe('decideApproval', () => {
     const { client: executionQueue } = createMockExecutionQueue()
     await expect(
       decideApproval(
-        { db: db as never, cerbosClient: createFourEyesCerbosClient(ORG_ID), executionQueue },
+        { db: db as never, cerbosClient: createFourEyesCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
         submitterAsReviewer,
-        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
+        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
       ),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
   })
@@ -143,9 +151,9 @@ describe('decideApproval', () => {
     const { client: executionQueue } = createMockExecutionQueue()
     await expect(
       decideApproval(
-        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue },
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
         reviewer,
-        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
+        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
       ),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
@@ -155,11 +163,37 @@ describe('decideApproval', () => {
     const { client: executionQueue } = createMockExecutionQueue()
     await expect(
       decideApproval(
-        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue },
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
         reviewer,
-        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED' },
+        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
+  })
+
+  it('rejects with UNAUTHORIZED and audits REAUTHENTICATION_FAILED when the reauth token is invalid', async () => {
+    const { db, insertedByTable } = createMockDb(baseFixtures())
+    const { client: executionQueue } = createMockExecutionQueue()
+    await expect(
+      decideApproval(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
+        reviewer,
+        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: 'stale-or-bogus-token' },
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
+    expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['REAUTHENTICATION_FAILED'])
+  })
+
+  it('rejects with UNAUTHORIZED when the reauth token belongs to a different Keycloak account', async () => {
+    const fixtures = { ...baseFixtures(), users: { id: REVIEWER_ID, keycloakId: 'someone-elses-keycloak-id' } }
+    const { db } = createMockDb(fixtures)
+    const { client: executionQueue } = createMockExecutionQueue()
+    await expect(
+      decideApproval(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
+        reviewer,
+        { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
+      ),
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
   })
 })
 

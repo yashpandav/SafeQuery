@@ -23,6 +23,7 @@ export interface ColumnDefinition {
 }
 export interface TestConnectionJobData {
   type: typeof JOB_NAMES.TEST_CONNECTION
+  orgId: string
   host: string
   port: number
   database: string
@@ -37,6 +38,7 @@ export interface TestConnectionJobResult {
 }
 export interface CaptureSchemaJobData {
   type: typeof JOB_NAMES.CAPTURE_SCHEMA
+  orgId: string
   connection: ConnectionTarget
 }
 export interface CaptureSchemaJobResult {
@@ -46,6 +48,7 @@ export interface CaptureSchemaJobResult {
 }
 export interface ExecuteReadJobData {
   type: typeof JOB_NAMES.EXECUTE_READ
+  orgId: string
   connection: ConnectionTarget
   sql: string
   rowCap: number | null
@@ -66,6 +69,7 @@ export interface ExecuteReadJobResult {
 }
 export interface ExecuteWriteJobData {
   type: typeof JOB_NAMES.EXECUTE_WRITE
+  orgId: string
   connection: ConnectionTarget
   sql: string
   dryRun: boolean

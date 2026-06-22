@@ -36,6 +36,7 @@ my-turborepo/
 │   ├── secrets/          # AES-256-GCM envelope encryption for DB credentials ✅ BUILT
 │   ├── queue/            # Shared BullMQ job contracts (api ↔ dispatcher ↔ executor) ✅ BUILT
 │   ├── rate-limit/       # rate-limiter-flexible wrappers (Redis-backed + in-memory for tests) ✅ BUILT
+│   ├── logger/           # Pino structured JSON logging + credential redaction ✅ BUILT
 │   ├── eslint-config/    # Shared ESLint configs ✅ EXISTS
 │   └── typescript-config/ # Shared TS configs ✅ EXISTS
 ├── infra/
@@ -244,7 +245,9 @@ Shared BullMQ job contracts between `apps/api` (producer), `apps/tre-dispatcher`
 `test_connection`, `capture_schema`, `execute_read`, `execute_write` — each with its own typed
 data/result shape, plus a `JobResultMap` that lets a generic caller (`ExecutionQueueClient.run<T>`) get
 back the specific result type for the job it sent, not the full union. `createRedisConnection()` sets
-`maxRetriesPerRequest: null`, which BullMQ requires.
+`maxRetriesPerRequest: null`, which BullMQ requires. Every job data shape now also carries `orgId` (SQ-060,
+see `apps/tre-dispatcher`'s section) — required, not optional, since per-org concurrency limiting can't
+work for a job nobody can attribute to an org.
 
 ### `packages/rate-limit`
 Thin wrapper over `rate-limiter-flexible` (SQ-059). `RateLimiter.consume(key, { points, duration })`
@@ -259,6 +262,31 @@ across calls — without that, every call would get a fresh empty counter and ne
 (`pnpm --filter @repo/rate-limit test`) cover both behaviors using the real in-memory limiter, not a
 hand-rolled fake — `apps/api`'s own tests reuse this same `createMemoryRateLimiter()` rather than a
 second mock.
+
+### `packages/logger`
+Structured JSON logging (SQ-067) — `createLogger(service)` wraps Pino with one shared `redact` config
+across every backend service, replacing the raw `console.log`/`console.error` calls that used to be the
+*only* logging in this codebase (confirmed by an explicit audit before writing this: zero secrets were
+actually leaking today, but there was also zero redaction safety net — the next person to
+`console.log(job.data)` on a `test_connection` job, whose payload is plaintext `username`/`password`,
+would have leaked credentials straight to stdout with nothing to stop it). The redact path list
+(`password`, `username`, `*.encryptedCredentials`, `*.connection.encryptedCredentials`, `*.token`,
+`sessionToken`, `keycloakToken`, `req.headers.authorization`, each at a couple of common nesting depths)
+targets the actual shapes that carry secrets in this codebase — `fast-redact` (which Pino uses
+underneath) matches exact paths, not arbitrary depth, so this is deliberately an explicit list rather
+than one recursive wildcard. 5 unit tests (`pnpm --filter @repo/logger test`) construct a real Pino
+logger against a captured in-memory stream and assert the redacted fields actually come out as
+`[REDACTED]` in the emitted JSON — not just that the config object looks right.
+
+Every backend app (`apps/api`, `apps/ai-service`, `apps/tre-dispatcher`, `apps/tre-executor`) now has its
+own `src/logger.ts` (`createLogger('<service-name>')`) used in place of `console.*` for startup banners,
+env-validation failures, and tRPC's `onError` hook. **`apps/tre-executor`'s four handlers had zero
+logging at all before this** — the only component that ever touches a customer database was completely
+silent on success or failure. Each handler now logs `{ host, port, database, ... }` plus
+outcome-specific fields (`affectedRows`/`executionMs` for writes, `rowCount`/`truncated` for reads,
+`tableCount` for schema capture) — deliberately built from named fields rather than spreading the raw
+job object, so `username`/`password`/`encryptedCredentials` never reach the logger in the first place;
+the redact config is the defense-in-depth backstop for the next call site, not the primary safeguard.
 
 ### `apps/api`
 Express server with tRPC router. Three-tier procedure hierarchy:
@@ -425,6 +453,21 @@ enqueued. On **APPROVED**: enqueues the *same validated SQL* as an `execute_writ
 `dryRun: false` — no data is copied or merged from the earlier dry-run, this fresh run's `COMMIT` is the
 change reaching production (PROOF_OF_CONCEPT.md §12) — then updates `query_logs` to `EXECUTED`/`FAILED`.
 
+**Reviewer re-authentication (FR-15/SQ-049) — closed a real gap, not a new feature.** Before this, any
+valid session could call `approval.decide` — a stolen session token alone was enough to approve a
+CRITICAL write, with no proof the actual reviewer was at the keyboard. `decide` now requires a
+`reauthToken`: the *same* dev-shortcut Keycloak password grant the login page already uses, called
+again immediately before the decision (`apps/web/lib/keycloak.ts`'s `getKeycloakToken()`, extracted
+from the login page so both call sites share it). `assertReauthenticated()` in `approval-pipeline.ts`
+verifies that token and checks its Keycloak subject matches the *current* session's user — not just
+"is this a valid Keycloak token for anyone," but "for this specific reviewer." There's deliberately no
+separate staleness/expiry check on top of that: Keycloak's own `accessTokenLifespan` (300s in this
+realm) already makes a valid token mean a *recent* one, since the client can only obtain it by
+resubmitting the password right then. A failed re-auth audits `REAUTHENTICATION_FAILED` and runs
+*before* the approval lookup even happens — the caller never learns whether the request ID was even
+valid. `apps/web/app/approvals/page.tsx` now has a required password field that must be filled before
+Approve/Reject are enabled at all.
+
 The WARNING acknowledgment step now has a `web` UI screen too (`apps/web/app/query-result.tsx`'s
 "Acknowledge & Run" button), not just Postman folder 4 — see the `apps/web` section below.
 
@@ -505,9 +548,12 @@ insert-then-update, so `customRole.update`/`environment.updateType` didn't need 
 ### `apps/tre-executor`
 **The only component in this entire codebase allowed to touch a customer database**, and the only one
 holding `CREDENTIAL_MASTER_KEY`. Not a standalone running service — a library of handler functions
-(`src/lib/*.ts`) that `apps/tre-dispatcher` imports and calls directly; this is the Phase-1 simplification
-of "BullMQ + worker_threads" (PROOF_OF_CONCEPT.md §27) — true process/container isolation per write is a
-documented Phase-3 upgrade (container TRE), not silently claimed now.
+(`src/lib/*.ts`). Three of the four are still imported and called directly in-process by
+`apps/tre-dispatcher` (the Phase-1 simplification of "BullMQ + worker_threads" from
+PROOF_OF_CONCEPT.md §27); `handleExecuteWrite` is the first one upgraded to actually run inside its own
+`worker_threads` `Worker` per job — see `apps/tre-dispatcher`'s section below for what that does and
+doesn't prove yet. True OS-process/container isolation (rather than a thread within the same process)
+is still the documented further Phase-3 upgrade, not silently claimed now.
 
 Four handlers, one per `packages/queue` job type, each taking an injectable `ClientFactory`/`CursorFactory`
 so they're fully unit-testable against a fake `pg.Client` (`src/__tests__/fake-client.ts`) — no real
@@ -532,10 +578,61 @@ Env vars: `CREDENTIAL_MASTER_KEY` (64 hex chars — **never set this anywhere el
 `LOCK_TIMEOUT_MS`, `DEFAULT_ROW_CAP`. 22 unit tests (`pnpm --filter @repo/tre-executor test`, vitest).
 
 ### `apps/tre-dispatcher`
-The actual running process — a BullMQ `Worker` consuming `packages/queue`'s shared execution queue,
-calling `apps/tre-executor`'s `handleJob()` per job. Deliberately thin: routing is the entire job.
-Env vars: `REDIS_URL`, `WORKER_CONCURRENCY` (default 5 — reads and writes currently share one pool;
-tiered isolation between them is a Phase-3 concern per the same container-TRE upgrade path above).
+The actual running process — a BullMQ `Worker` consuming `packages/queue`'s shared execution queue.
+Deliberately thin: routing is the entire job. Env vars: `REDIS_URL`, `WORKER_CONCURRENCY` (default 5 —
+reads and writes still share one pool; *which job types* get isolation is the worker-thread split
+below, not a separate pool per type), `MAX_CONCURRENT_JOBS_PER_ORG` (default 3, see SQ-060 below).
+
+**Per-org queue concurrency limiting (SQ-060).** Every job type now carries `orgId` (added to
+`ExecutionJobData` in `packages/queue`, threaded through from every `apps/api` call site that enqueues
+one — `query-pipeline.ts`, `connection-pipeline.ts`, `approval-pipeline.ts`). Before the processor does
+any real work, it checks how many of that *same org's* jobs are currently `active` (via a `Queue`
+instance's `getJobs(['active'])` — created alongside the existing `Worker`, sharing its Redis
+connection, since querying job metadata isn't a blocking/subscriber operation the way the rate-limiter
+singleton's reasoning required a separate connection) and, if at `MAX_CONCURRENT_JOBS_PER_ORG`, calls
+`job.moveToDelayed()` + throws BullMQ's `DelayedError` rather than processing it — the documented BullMQ
+pattern for "this job isn't done, but don't mark it failed either, redeliver it after a short delay."
+This is "one tenant cannot starve others or overload a customer DB," actually enforced, not just
+described. The check itself (`shouldDelayForOrgConcurrency` in `src/lib/org-concurrency.ts`) is a pure
+function taking the active-jobs lookup as a parameter, so it's unit-tested (4 tests) without a real
+Queue/Redis — including the easy-to-miss case that BullMQ already marks the *current* job active by the
+time the check runs, so it must be excluded by id or every org would self-trigger the limit on its very
+first job.
+
+**Per-write worker-thread isolation (P3, first slice of "Container TRE").** `execute_write` jobs —
+the only job type that ever `COMMIT`s to a customer database — no longer call `apps/tre-executor`'s
+`handleExecuteWrite()` in-process like the other three job types still do via `handleJob()`. They're
+routed through `src/lib/run-in-worker-thread.ts`'s `runExecuteWriteInWorker()`, which spawns a fresh
+`node:worker_threads` `Worker` per job (`src/execute-write-worker.ts` is its entry point), waits for a
+`{ ok, result }`/`{ ok: false, error }` message, and **always terminates the worker afterward** —
+success, failure, uncaught error, or timeout (30s default). This is the "ephemeral, single-use, fresh
+per write, max isolation" Ephemeral Write Executor tier from the two-tier execution table in
+`Docs/02_TECHNICAL_ARCHITECTURE.md` §13 actually implemented, not just described — a crash or hang
+inside one write can no longer take down the dispatcher process or affect any other job, and the
+worker's heap (including whatever decrypted credentials it held) is freed the moment it's terminated
+rather than reused across writes. Reads/`test_connection`/`capture_schema` deliberately stay on the
+cheaper in-process "Warm Read Pool" path (`handleJob()`) — they never write, so the isolation cost
+isn't justified for them. The orchestration logic (`runExecuteWriteInWorker`) takes the actual
+`Worker`-spawning function as a parameter (`WorkerFactory`) specifically so it's unit-testable against
+a fake `WorkerLike` (6 tests, `pnpm --filter @repo/tre-dispatcher test`) without ever spawning a real
+OS thread.
+
+**Known sharp edge, confirmed by hand, not yet fixed:** spawning the real worker under `tsx` (this
+app's `pnpm dev`) fails to resolve `apps/tre-executor`'s own internal extensionless relative imports
+(e.g. `./lib/pg-client`) — confirmed with `--import tsx/esm`, `--import tsx`, `NODE_OPTIONS`, and
+`--require tsx/cjs`, all giving the identical `ERR_MODULE_NOT_FOUND`, even though the exact same import
+chain resolves fine via `tsx` on the *main* thread. This reproduces with or without going through
+`apps/tre-executor`'s barrel `index.ts`, so it isn't about that file specifically — it's `tsx`'s loader
+hooks not fully applying inside a spawned `worker_threads` `Worker` in this version. It is **not** a
+worker-thread-specific design flaw — every package in this monorepo (e.g. `@repo/queue`) hits the same
+class of `ERR_MODULE_NOT_FOUND` even from the dispatcher's own *main* entry point once compiled
+(`tsup`'s build externalizes workspace packages rather than bundling them, and those packages are
+intentionally never given their own build step per this repo's "packages export raw TypeScript source
+directly" convention) — so `node dist/index.js` already couldn't run standalone before this change,
+for reasons unrelated to worker threads. Net effect: the new code is architecturally correct and fully
+unit-tested, but an actual live write executing inside the spawned worker thread has not been observed
+end-to-end in this environment (would need either a tsx fix/workaround upstream, or a real build step
+for `apps/tre-executor`, neither of which this change attempts).
 
 ### `apps/ai-service`
 Standalone Express + tRPC service — text-to-SQL generation, isolated from `apps/api` per the architecture
@@ -610,7 +707,9 @@ manual config; `organization.list` resolves live from `organization_members`, th
   and `apps/web`.
 - `app/approvals/page.tsx` (Reviewer) — lists requests via `approval.list` (click one to select it, or
   paste an ID manually) and Approve/Reject via `approval.decide`. Cerbos's four-eyes DENY rule still
-  applies — a submitter selecting their own request gets `FORBIDDEN`.
+  applies — a submitter selecting their own request gets `FORBIDDEN`. A password field (re-authentication,
+  SQ-049) is required before either button enables; submitting re-runs the same Keycloak password grant
+  the login page uses, via the shared `apps/web/lib/keycloak.ts` helper.
 - `app/audit-log/page.tsx` — `audit.list` rendered as a TIME/EVENT/RISK/HASH table (action names
   humanized from `SCREAMING_SNAKE_CASE` rather than a hand-maintained lookup table, so new
   `AuditAction` values render correctly with zero changes here); the RISK column only shows a badge
@@ -721,7 +820,7 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
 | P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
 | P2 | Governance | ✅ **Complete.** Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059), org creation + invite flow (SQ-015/SQ-016) all done — `apps/web/app/admin` + `apps/web/app/audit-log` + `apps/web/app/login`. |
-| P3 | Real Isolation | 🔲 Container TRE (true per-write process isolation — tre-executor is currently a library tre-dispatcher calls in-process, not yet its own container/worker_thread), Vault dynamic secrets replacing packages/secrets |
+| P3 | Real Isolation | 🟡 In progress. `execute_write` jobs now run in their own `worker_threads` `Worker`, terminated after every job (`apps/tre-dispatcher`) — reads/test/capture-schema still go through the in-process path, matching the Warm-Pool/Ephemeral-Executor split in the docs. Not yet validated against a real live write (see the dispatcher section's "known sharp edge" note) and not yet a true OS-process/container boundary. Per-org queue concurrency limiting (SQ-060) done — every job now carries `orgId`, enforced via `MAX_CONCURRENT_JOBS_PER_ORG` + BullMQ's `DelayedError` redelivery pattern. Still 🔲: actual container isolation, Vault dynamic secrets replacing `packages/secrets` |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |
 
@@ -804,7 +903,7 @@ Node >= 18 required. pnpm 9 required.
 - **No direct API→customer DB** — all execution through queue-based TRE; enforced by construction (`apps/api` has no `pg` dependency at all, only `@repo/queue`)
 - **Two-layer envelope encryption, not direct master-key encryption** — a random per-secret DEK encrypts the credentials, the DEK is encrypted by the KEK (`CREDENTIAL_MASTER_KEY`); rotating the master key never requires re-encrypting every connection
 - **`CREDENTIAL_MASTER_KEY` lives only on `apps/tre-executor`** — including for *encrypting* a brand-new connection's credentials, not just decrypting; `apps/api` enqueues a `test_connection` job and only ever receives the already-encrypted envelope back, so it never has the means to decrypt anything even if compromised
-- **`apps/tre-executor` is an in-process module, not yet its own container** — Phase 1 deliberately simplifies "BullMQ + worker_threads" to "BullMQ dispatcher importing a handler library"; true per-write process isolation is the documented Phase 3 upgrade, not silently skipped
+- **`apps/tre-executor` is an in-process module, not yet its own container** — Phase 1 deliberately simplified "BullMQ + worker_threads" to "BullMQ dispatcher importing a handler library"; `execute_write` is the first handler upgraded back to running in its own `worker_threads` `Worker` (P3, in progress) — see `apps/tre-dispatcher`'s section for what's verified vs. not. True OS-process/container isolation is the further upgrade beyond that, not silently skipped
 - **Hash-chain audit** — tamper-evident without blockchain operational overhead
 - **Source package pattern** — packages export `.ts` directly, `moduleResolution: Bundler`, no build step
 

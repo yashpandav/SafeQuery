@@ -2,6 +2,7 @@ import { Client } from 'pg'
 import { encryptDatabaseCredentials } from '@repo/secrets'
 import type { TestConnectionJobData, TestConnectionJobResult } from '@repo/queue'
 import { env } from '../env'
+import { logger } from '../logger'
 
 export type TestClientFactory = (data: TestConnectionJobData) => Client
 
@@ -15,6 +16,11 @@ const defaultTestClientFactory: TestClientFactory = (data) =>
     ssl: data.ssl,
     connectionTimeoutMillis: 5_000,
   })
+
+function connectionContext(data: TestConnectionJobData) {
+  return { host: data.host, port: data.port, database: data.database, ssl: data.ssl }
+}
+
 export async function handleTestConnection(
   data: TestConnectionJobData,
   clientFactory: TestClientFactory = defaultTestClientFactory,
@@ -27,11 +33,14 @@ export async function handleTestConnection(
       { username: data.username, password: data.password },
       env.CREDENTIAL_MASTER_KEY,
     )
+    logger.info(connectionContext(data), 'test_connection succeeded')
     return { success: true, error: null, encryptedCredentials }
   } catch (err) {
+    const error = err instanceof Error ? err.message : 'Connection failed'
+    logger.warn({ ...connectionContext(data), err: error }, 'test_connection failed')
     return {
       success: false,
-      error: err instanceof Error ? err.message : 'Connection failed',
+      error,
       encryptedCredentials: null,
     }
   } finally {

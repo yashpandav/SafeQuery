@@ -4,6 +4,7 @@
     "outDir": "dist",
     "paths": {
       "@repo/auth": ["../../packages/auth/src/index.ts"],
+      "@repo/logger": ["../../packages/logger/src/index.ts"],
       "@repo/types": ["../../packages/types/src/index.ts"]
     }
   },

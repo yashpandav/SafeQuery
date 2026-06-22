@@ -22,7 +22,9 @@
     "STATEMENT_TIMEOUT_MS",
     "LOCK_TIMEOUT_MS",
     "DEFAULT_ROW_CAP",
-    "WORKER_CONCURRENCY"
+    "WORKER_CONCURRENCY",
+    "MAX_CONCURRENT_JOBS_PER_ORG",
+    "LOG_LEVEL"
   ],
   "tasks": {
     "build": {

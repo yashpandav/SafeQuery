@@ -59,6 +59,7 @@ export async function createConnection(
 
   const testResult = await deps.executionQueue.run({
     type: JOB_NAMES.TEST_CONNECTION,
+    orgId: principal.orgId,
     host: input.host,
     port: input.port,
     database: input.database,
@@ -126,6 +127,7 @@ export async function captureSchema(
 
   const result = await deps.executionQueue.run({
     type: JOB_NAMES.CAPTURE_SCHEMA,
+    orgId: principal.orgId,
     connection: {
       host: connection.host,
       port: connection.port,
