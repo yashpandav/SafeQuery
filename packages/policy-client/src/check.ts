@@ -12,6 +12,7 @@ import type {
   DashboardResourceAttrs,
   PolicyResourceAttrs,
   InvitationResourceAttrs,
+  OrganizationMemberResourceAttrs,
   QueryAction,
   ApprovalAction,
   DatabaseConnectionAction,
@@ -22,6 +23,7 @@ import type {
   DashboardAction,
   PolicyAction,
   InvitationAction,
+  OrganizationMemberAction,
   DecisionMap,
   DbTableDecision,
 } from './types'
@@ -205,6 +207,17 @@ export async function checkInvitation(
   actions: InvitationAction[],
 ): Promise<DecisionMap<InvitationAction>> {
   return check(client, principal, 'invitation', resource.id, {
+    org_id: resource.orgId,
+  }, actions)
+}
+
+export async function checkOrganizationMember(
+  client: CerbosClient,
+  principal: CerbosPrincipal,
+  resource: OrganizationMemberResourceAttrs,
+  actions: OrganizationMemberAction[],
+): Promise<DecisionMap<OrganizationMemberAction>> {
+  return check(client, principal, 'organization_member', resource.id, {
     org_id: resource.orgId,
   }, actions)
 }

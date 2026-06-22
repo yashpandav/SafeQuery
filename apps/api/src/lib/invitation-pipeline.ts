@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { eq, and } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
-import { invitations, organizationMembers } from '@repo/db/schema'
+import { invitations, organizationMembers, customRoles } from '@repo/db/schema'
 import type { DbClient } from '@repo/db'
 import type { CerbosClient, CerbosPrincipal } from '@repo/policy-client'
 import { checkInvitation } from '@repo/policy-client'
@@ -25,6 +25,7 @@ export interface InvitationSummary {
   id: string
   email: string
   platformRole: PlatformRole
+  customRoleId: string | null
   expired: boolean
   expiresAt: Date
   createdAt: Date
@@ -35,7 +36,15 @@ function toCerbosPrincipal(p: InvitationPrincipal): CerbosPrincipal {
 }
 
 function toSummary(row: typeof invitations.$inferSelect, now: Date): InvitationSummary {
-  return { id: row.id, email: row.email, platformRole: row.platformRole, expired: row.expiresAt <= now, expiresAt: row.expiresAt, createdAt: row.createdAt }
+  return {
+    id: row.id,
+    email: row.email,
+    platformRole: row.platformRole,
+    customRoleId: row.customRoleId,
+    expired: row.expiresAt <= now,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+  }
 }
 
 export async function listInvitations(deps: InvitationPipelineDeps, principal: InvitationPrincipal): Promise<InvitationSummary[]> {
@@ -51,11 +60,19 @@ export async function createInvitation(deps: InvitationPipelineDeps, principal: 
   const decision = await checkInvitation(deps.cerbosClient, toCerbosPrincipal(principal), { id: 'new', orgId: principal.orgId }, ['create'])
   if (!decision.create) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to invite members' })
 
+  if (input.customRoleId !== undefined && input.customRoleId !== null) {
+    const role = await deps.db.query.customRoles.findFirst({
+      where: and(eq(customRoles.id, input.customRoleId), eq(customRoles.orgId, principal.orgId)),
+    })
+    if (!role) throw new TRPCError({ code: 'NOT_FOUND', message: 'Custom role not found in this organization' })
+  }
+
   const email = input.email.toLowerCase()
   const expiresAt = new Date(Date.now() + INVITATION_EXPIRY_MS)
+  const customRoleId = input.customRoleId ?? null
   const [invitation] = await deps.db
     .insert(invitations)
-    .values({ orgId: principal.orgId, email, platformRole: input.platformRole, token: randomUUID(), expiresAt })
+    .values({ orgId: principal.orgId, email, platformRole: input.platformRole, customRoleId, token: randomUUID(), expiresAt })
     .returning()
   if (!invitation) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
 
@@ -65,7 +82,7 @@ export async function createInvitation(deps: InvitationPipelineDeps, principal: 
     action: 'USER_INVITED',
     resourceType: 'invitation',
     resourceId: invitation.id,
-    metadata: { email, platformRole: input.platformRole },
+    metadata: { email, platformRole: input.platformRole, customRoleId },
   })
 
   return toSummary(invitation, new Date())
@@ -114,7 +131,7 @@ export async function acceptPendingInvitations(deps: { db: DbClient }, userId: s
 
   for (const invite of valid) {
     if (!memberOrgIds.has(invite.orgId)) {
-      await deps.db.insert(organizationMembers).values({ orgId: invite.orgId, userId, platformRole: invite.platformRole })
+      await deps.db.insert(organizationMembers).values({ orgId: invite.orgId, userId, platformRole: invite.platformRole, customRoleId: invite.customRoleId })
       await writeAuditLog(deps.db, {
         orgId: invite.orgId,
         actorId: userId,

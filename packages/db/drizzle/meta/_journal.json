@@ -29,6 +29,13 @@
       "when": 1782029116850,
       "tag": "0003_naive_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782138281658,
+      "tag": "0004_green_annihilus",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,15 @@
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: "organization_member"
+  importDerivedRoles:
+    - common_roles
+
+  rules:
+    # ── Only admins and owners can manage organization membership — viewing the
+    #    roster, changing a member's platform/custom role, or removing a member
+    #    are all org-admin-only actions, same gate as custom_role.yaml ──
+    - actions: ["read", "update", "delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["same_org_admin"]

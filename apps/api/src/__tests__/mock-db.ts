@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { customRoles, environments, queryLogs, approvalRequests, policies, invitations } from '@repo/db/schema'
+import { customRoles, environments, queryLogs, approvalRequests, policies, invitations, organizationMembers } from '@repo/db/schema'
 
 export interface MockDbFixtures {
   organizationMembers?: unknown
@@ -61,6 +61,7 @@ export function createMockDb(fixtures: MockDbFixtures) {
     if (table === approvalRequests) return fixtures.approvalRequests as Record<string, unknown> | undefined
     if (table === policies) return fixtures.policies as Record<string, unknown> | undefined
     if (table === invitations) return fixtures.invitations as Record<string, unknown> | undefined
+    if (table === organizationMembers) return fixtures.organizationMembers as Record<string, unknown> | undefined
     return undefined
   }
 

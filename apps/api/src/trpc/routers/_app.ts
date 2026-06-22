@@ -11,6 +11,7 @@ import { environmentRouter } from './environment'
 import { dashboardRouter } from './dashboard'
 import { policyRouter } from './policy'
 import { invitationRouter } from './invitation'
+import { memberRouter } from './member'
 
 export const appRouter = createTRPCRouter({
   auth: authRouter,
@@ -25,5 +26,6 @@ export const appRouter = createTRPCRouter({
   dashboard: dashboardRouter,
   policy: policyRouter,
   invitation: invitationRouter,
+  member: memberRouter,
 })
 export type AppRouter = typeof appRouter

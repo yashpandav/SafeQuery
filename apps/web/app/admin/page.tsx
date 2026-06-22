@@ -36,6 +36,7 @@ export default function AdminPage() {
   const connections = useQuery({ ...trpc.databaseConnection.list.queryOptions(), enabled: Boolean(session) && isAdmin })
   const rateLimits = useQuery({ ...trpc.policy.getRateLimits.queryOptions(), enabled: Boolean(session) && isAdmin })
   const invitations = useQuery({ ...trpc.invitation.list.queryOptions(), enabled: Boolean(session) && isAdmin })
+  const members = useQuery({ ...trpc.member.list.queryOptions(), enabled: Boolean(session) && isAdmin })
 
   const createRole = useMutation(trpc.customRole.create.mutationOptions())
   const updateRole = useMutation(trpc.customRole.update.mutationOptions())
@@ -47,6 +48,8 @@ export default function AdminPage() {
   const updateRateLimits = useMutation(trpc.policy.updateRateLimits.mutationOptions())
   const createInvitation = useMutation(trpc.invitation.create.mutationOptions())
   const revokeInvitation = useMutation(trpc.invitation.revoke.mutationOptions())
+  const updateMemberRole = useMutation(trpc.member.updateRole.mutationOptions())
+  const removeMember = useMutation(trpc.member.remove.mutationOptions())
 
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null)
@@ -61,7 +64,9 @@ export default function AdminPage() {
   const [rateLimitError, setRateLimitError] = useState<string | null>(null)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'admin' | 'reviewer' | 'analyst' | 'viewer'>('analyst')
+  const [inviteCustomRoleId, setInviteCustomRoleId] = useState('')
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [memberError, setMemberError] = useState<string | null>(null)
 
   useEffect(() => {
     if (rateLimits.data && !rateLimitDraft) {
@@ -83,6 +88,10 @@ export default function AdminPage() {
 
   async function refetchInvitations() {
     await queryClient.invalidateQueries({ queryKey: trpc.invitation.list.queryKey() })
+  }
+
+  async function refetchMembers() {
+    await queryClient.invalidateQueries({ queryKey: trpc.member.list.queryKey() })
   }
 
   if (!session || !isAdmin) return null
@@ -243,6 +252,121 @@ export default function AdminPage() {
       </div>
 
       <div>
+        <h2 className="mb-2 text-sm font-medium text-muted">Members</h2>
+
+        {members.isError && (
+          <div role="alert" className="mb-2 rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
+            {members.error.message}
+          </div>
+        )}
+        {memberError && (
+          <div role="alert" className="mb-2 rounded-lg bg-critical-bg px-3 py-2 text-sm text-critical">
+            {memberError}
+          </div>
+        )}
+
+        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted">
+                <th className="border-b border-border px-3 py-2">Email</th>
+                <th className="border-b border-border px-3 py-2">Name</th>
+                <th className="border-b border-border px-3 py-2">Platform role</th>
+                <th className="border-b border-border px-3 py-2">Custom role</th>
+                <th className="border-b border-border px-3 py-2">Joined</th>
+                <th className="border-b border-border px-3 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.data?.map((member) => (
+                <tr key={member.userId}>
+                  <td className="border-b border-border px-3 py-2 font-medium">{member.email}</td>
+                  <td className="border-b border-border px-3 py-2 text-xs text-muted">{member.name ?? '—'}</td>
+                  <td className="border-b border-border px-3 py-2">
+                    <select
+                      aria-label={`Change ${member.email}'s platform role`}
+                      value={member.platformRole}
+                      disabled={updateMemberRole.isPending}
+                      onChange={async (e) => {
+                        setMemberError(null)
+                        try {
+                          await updateMemberRole.mutateAsync({
+                            userId: member.userId,
+                            platformRole: e.target.value as 'owner' | 'admin' | 'reviewer' | 'analyst' | 'viewer',
+                          })
+                          await refetchMembers()
+                        } catch (err) {
+                          setMemberError(err instanceof Error ? err.message : 'Failed to update platform role')
+                        }
+                      }}
+                      className="rounded border border-border bg-transparent px-2 py-1 text-xs"
+                    >
+                      <option value="owner">owner</option>
+                      <option value="admin">admin</option>
+                      <option value="reviewer">reviewer</option>
+                      <option value="analyst">analyst</option>
+                      <option value="viewer">viewer</option>
+                    </select>
+                  </td>
+                  <td className="border-b border-border px-3 py-2">
+                    <select
+                      aria-label={`Change ${member.email}'s custom role`}
+                      value={member.customRoleId ?? ''}
+                      disabled={updateMemberRole.isPending}
+                      onChange={async (e) => {
+                        setMemberError(null)
+                        try {
+                          const value = e.target.value
+                          await updateMemberRole.mutateAsync({ userId: member.userId, customRoleId: value === '' ? null : value })
+                          await refetchMembers()
+                        } catch (err) {
+                          setMemberError(err instanceof Error ? err.message : 'Failed to update custom role')
+                        }
+                      }}
+                      className="rounded border border-border bg-transparent px-2 py-1 text-xs"
+                    >
+                      <option value="">— none —</option>
+                      {roles.data?.map((role) => (
+                        <option key={role.id} value={role.id}>
+                          {role.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="border-b border-border px-3 py-2 text-xs text-muted">{new Date(member.joinedAt).toLocaleDateString()}</td>
+                  <td className="border-b border-border px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      className="text-xs text-critical underline"
+                      onClick={async () => {
+                        if (!window.confirm(`Remove ${member.email} from this organization?`)) return
+                        setMemberError(null)
+                        try {
+                          await removeMember.mutateAsync({ userId: member.userId })
+                          await refetchMembers()
+                        } catch (err) {
+                          setMemberError(err instanceof Error ? err.message : 'Failed to remove member')
+                        }
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {members.data?.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-4 text-center text-sm text-muted">
+                    No members yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
         <h2 className="mb-2 text-sm font-medium text-muted">Invite members</h2>
         <p className="mb-2 text-xs text-muted">
           No SMTP is configured — the invited email just needs to sign in (or self-register, since the Keycloak realm
@@ -255,8 +379,13 @@ export default function AdminPage() {
             e.preventDefault()
             setInviteError(null)
             try {
-              await createInvitation.mutateAsync({ email: inviteEmail, platformRole: inviteRole })
+              await createInvitation.mutateAsync({
+                email: inviteEmail,
+                platformRole: inviteRole,
+                customRoleId: inviteCustomRoleId || null,
+              })
               setInviteEmail('')
+              setInviteCustomRoleId('')
               await refetchInvitations()
             } catch (err) {
               setInviteError(err instanceof Error ? err.message : 'Failed to create invitation')
@@ -291,6 +420,24 @@ export default function AdminPage() {
               <option value="reviewer">reviewer</option>
               <option value="analyst">analyst</option>
               <option value="viewer">viewer</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="invite-custom-role" className="text-xs text-muted">
+              Custom role
+            </label>
+            <select
+              id="invite-custom-role"
+              value={inviteCustomRoleId}
+              onChange={(e) => setInviteCustomRoleId(e.target.value)}
+              className="rounded border border-border bg-transparent px-2 py-1 text-xs"
+            >
+              <option value="">— none —</option>
+              {roles.data?.map((role) => (
+                <option key={role.id} value={role.id}>
+                  {role.name}
+                </option>
+              ))}
             </select>
           </div>
           <Button type="submit" variant="primary" disabled={createInvitation.isPending}>

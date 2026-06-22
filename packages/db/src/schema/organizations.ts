@@ -34,6 +34,7 @@ export const invitations = pgTable('invitations', {
     .references(() => organizations.id, { onDelete: 'cascade' }),
   email: text('email').notNull(),
   platformRole: platformRoleEnum('platform_role').notNull(),
+  customRoleId: uuid('custom_role_id').references(() => customRoles.id, { onDelete: 'set null' }),
   token: text('token').notNull().unique(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

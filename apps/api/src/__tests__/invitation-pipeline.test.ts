@@ -17,11 +17,12 @@ const ADMIN_ID = 'admin-1'
 const ANALYST_ID = 'analyst-1'
 const USER_ID = 'user-1'
 const INVITATION_ID = 'invite-1'
+const ROLE_ID = 'role-1'
+const OTHER_ORG_ROLE_ID = 'role-other-org'
 
 const admin: InvitationPrincipal = { userId: ADMIN_ID, orgId: ORG_ID, platformRole: 'admin' }
 const analyst: InvitationPrincipal = { userId: ANALYST_ID, orgId: ORG_ID, platformRole: 'analyst' }
 
-// Mirrors invitation.yaml: only same_org_admin gets any action.
 function createAdminOnlyCerbosClient(): CerbosClient {
   return {
     async checkResources(req: CheckResourcesRequest) {
@@ -63,6 +64,36 @@ describe('createInvitation', () => {
     await expect(
       createInvitation({ db: db as never, cerbosClient: createAdminOnlyCerbosClient() }, analyst, { email: 'x@example.com', platformRole: 'viewer' }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('persists a customRoleId and includes it in the audit metadata', async () => {
+    const fixtures: MockDbFixtures = {
+      customRoles: { id: ROLE_ID, orgId: ORG_ID, name: 'dev', description: null, config: {}, createdAt: new Date(), updatedAt: new Date() },
+    }
+    const { db, insertedByTable } = createMockDb(fixtures)
+
+    const result = await createInvitation({ db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) }, admin, {
+      email: 'new.hire@example.com',
+      platformRole: 'analyst',
+      customRoleId: ROLE_ID,
+    })
+
+    expect(result.customRoleId).toBe(ROLE_ID)
+    expect(insertedByTable.get(invitations)?.[0]).toMatchObject({ customRoleId: ROLE_ID })
+    expect(insertedByTable.get(auditLogs)?.[0]).toMatchObject({ metadata: { customRoleId: ROLE_ID } })
+  })
+
+  it('rejects a customRoleId from a different org with NOT_FOUND', async () => {
+    const fixtures: MockDbFixtures = { customRoles: undefined }
+    const { db } = createMockDb(fixtures)
+
+    await expect(
+      createInvitation({ db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) }, admin, {
+        email: 'new.hire@example.com',
+        platformRole: 'analyst',
+        customRoleId: OTHER_ORG_ROLE_ID,
+      }),
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
 })
 
@@ -140,6 +171,22 @@ describe('acceptPendingInvitations', () => {
     )
     expect(deletedByTable.get(invitations)).toHaveLength(2)
     expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['MEMBER_ADDED', 'MEMBER_ADDED'])
+  })
+
+  it('propagates customRoleId from the invitation onto the new membership row', async () => {
+    const fixtures: MockDbFixtures = {
+      invitationsList: [
+        { id: 'i1', orgId: 'org-a', email: 'me@example.com', platformRole: 'analyst', customRoleId: ROLE_ID, expiresAt: new Date(Date.now() + 60_000) },
+      ],
+      organizationMembersList: [],
+    }
+    const { db, insertedByTable } = createMockDb(fixtures)
+
+    await acceptPendingInvitations({ db: db as never }, USER_ID, 'me@example.com')
+
+    expect(insertedByTable.get(organizationMembers)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ orgId: 'org-a', userId: USER_ID, platformRole: 'analyst', customRoleId: ROLE_ID })]),
+    )
   })
 
   it('ignores expired invitations', async () => {

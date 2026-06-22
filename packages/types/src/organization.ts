@@ -29,6 +29,7 @@ export const InvitationSchema = z.object({
   orgId: z.string().uuid(),
   email: z.string().email(),
   platformRole: PlatformRole,
+  customRoleId: z.string().uuid().nullable(),
   token: z.string(),
   expiresAt: z.date(),
   createdAt: z.date(),
@@ -38,6 +39,7 @@ export type Invitation = z.infer<typeof InvitationSchema>
 export const CreateInvitationSchema = z.object({
   email: z.string().email(),
   platformRole: PlatformRole,
+  customRoleId: z.string().uuid().nullable().optional(),
 })
 export type CreateInvitation = z.infer<typeof CreateInvitationSchema>
 
@@ -45,3 +47,17 @@ export const RevokeInvitationSchema = z.object({
   invitationId: z.string().uuid(),
 })
 export type RevokeInvitation = z.infer<typeof RevokeInvitationSchema>
+
+export const UpdateMemberRoleSchema = z
+  .object({
+    userId: z.string().uuid(),
+    platformRole: PlatformRole.optional(),
+    customRoleId: z.string().uuid().nullable().optional(),
+  })
+  .refine((data) => data.platformRole !== undefined || data.customRoleId !== undefined, {
+    message: 'Provide at least one of platformRole or customRoleId to update',
+  })
+export type UpdateMemberRole = z.infer<typeof UpdateMemberRoleSchema>
+
+export const RemoveMemberSchema = z.object({ userId: z.string().uuid() })
+export type RemoveMember = z.infer<typeof RemoveMemberSchema>
