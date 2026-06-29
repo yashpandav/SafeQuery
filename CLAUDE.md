@@ -425,7 +425,39 @@ too, since it queries memberships fresh. No Cerbos check on `acceptPendingInvita
 reason as `organization.list`: "do I have a pending invitation for my own email" isn't a resource-access
 decision. `apps/web/app/admin/page.tsx`'s "Invite members" panel lists pending/expired invitations and
 lets an admin send a new one or revoke a pending one; there's no token-based "click to accept" link in
-the UI since the auto-accept-on-login design never needed one.
+the UI since the auto-accept-on-login design never needed one. `CreateInvitationSchema`/`invitations`
+also carry an optional `customRoleId` (a nullable FK to `custom_roles`, validated to belong to the
+caller's own org, same as `member.updateRole` below) — **this closes a real bug, not a new feature**:
+before this, `acceptPendingInvitations` always inserted the new `organization_members` row with
+`customRoleId: null` and there was no way to ever set it afterward, so every member who joined through
+the actual product (as opposed to the `db:seed` script writing rows directly) permanently had zero
+`query.submit` capability with no UI/API path to fix it. The "custom roles as data" story had a broken
+link between creating a role template and ever attaching it to a real person.
+
+**`member.list`/`.updateRole`/`.remove`** (`src/trpc/routers/member.ts`, `src/lib/member-pipeline.ts`)
+— the other half of that fix: ongoing membership management, gated by a new `organization_member.yaml`
+Cerbos policy (`same_org_admin` only, same pure-RBAC pattern as `custom_role.yaml`). `list` joins
+`organization_members` against `users` (email/name) and `custom_roles` (role name) so the admin UI
+shows real people, not UUIDs. `updateRole` changes a member's `platformRole` and/or `customRoleId`
+independently — omitting a field in the input leaves it untouched (Zod's `.optional()`, not a tri-state
+`null`-means-clear vs `undefined`-means-skip footgun, since `customRoleId` legitimately needs both:
+`null` to unassign, `undefined` to leave alone). `remove` deletes the membership row outright.
+
+Two safety invariants enforced in `member-pipeline.ts`, not just Cerbos, because they're about
+*relationships between members in the same org*, not a single resource's own attributes:
+- **Last-owner protection**: demoting or removing the organization's sole remaining `owner` is rejected
+  with `CONFLICT` — counts current owners in the org before allowing either operation, so an org can
+  never be left with zero owners (which would be unrecoverable without direct DB access).
+- **Owner-role boundary, added after a security review caught the gap**: `organization_member.yaml`'s
+  `same_org_admin` derived role covers *both* `admin` and `owner` identically (same as every other
+  admin-gated resource in this codebase), which means Cerbos alone doesn't stop a plain `admin` from
+  granting *themselves* the `owner` role — `update_member_role`'s "last owner" check only fires on
+  *demotion*, so promotion was wide open. `updateMemberRole` now requires `principal.platformRole ===
+  'owner'` whenever the call would grant or revoke the `owner` role specifically (on either end of the
+  transition — granting it to anyone, or revoking it from anyone), while ordinary role changes between
+  admin/reviewer/analyst/viewer still only need `same_org_admin`. This was caught by a `/security-review`
+  pass on the feature, not by the original implementation or its first round of tests — both of which
+  passed cleanly while the privilege-escalation path was live.
 
 **`databaseConnection.create`/`.list`/`.captureSchema`** (`src/trpc/routers/database-connection.ts`,
 `src/lib/connection-pipeline.ts`) — SQ-019/020/021/022. `create` enqueues a `test_connection` job (which
@@ -537,13 +569,14 @@ even though it also calls `packages/audit`'s `verifyIntegrity()` directly — th
 `dashboard:read` check already establishes the caller is an org admin, so asking Cerbos the same
 question twice under two different resource names would just be redundant.
 
-58 unit tests (`pnpm --filter @repo/api test`, vitest) across 8 files cover all of the above — risk-level
+115 unit tests (`pnpm --filter @repo/api test`, vitest) across 11 files cover all of the above — risk-level
 branching, the guard clauses (FORBIDDEN/NOT_FOUND/PRECONDITION_FAILED/CONFLICT), schema filtering,
-four-eyes rejection, and that plaintext credentials never appear in anything persisted — using
-lightweight in-memory mocks for `db`/Cerbos/ai-service/the execution queue, never a real Postgres,
-Redis, or network call. The mock `db`'s update-then-`.returning()` chain (`apps/api/src/__tests__/mock-db.ts`)
-falls back to the relevant `findFirst` fixture when a test does find-then-update rather than
-insert-then-update, so `customRole.update`/`environment.updateType` didn't need a parallel mock.
+four-eyes rejection, member management safety invariants (last-owner protection, owner-role privilege-escalation
+boundary), and that plaintext credentials never appear in anything persisted — using lightweight in-memory
+mocks for `db`/Cerbos/ai-service/the execution queue, never a real Postgres, Redis, or network call.
+The mock `db`'s update-then-`.returning()` chain (`apps/api/src/__tests__/mock-db.ts`) falls back to the
+relevant `findFirst` fixture when a test does find-then-update rather than insert-then-update, so
+`customRole.update`/`environment.updateType` didn't need a parallel mock.
 
 ### `apps/tre-executor`
 **The only component in this entire codebase allowed to touch a customer database**, and the only one
@@ -784,6 +817,10 @@ Policy files follow Cerbos `api.cerbos.dev/v1` schema:
   `custom_role.yaml`/`environment.yaml`/`dashboard.yaml`'s pure-RBAC pattern.
 - `invitation.yaml` — `same_org_admin`-only `create`/`read`/`delete` on pending member invitations,
   same pure-RBAC pattern as the above.
+- `organization_member.yaml` — `same_org_admin`-only `read`/`update`/`delete` on existing memberships;
+  the *granting/revoking the owner role specifically* boundary is enforced in `member-pipeline.ts`
+  itself, not here, since it depends on the *caller's own* role, not just org match (see the
+  `member.updateRole` section above).
 
 ### Keycloak (`infra/docker/keycloak/safequery-realm.json`)
 Realm `safequery`, client `safequery-web` (public PKCE), client `safequery-api` (confidential).
@@ -819,7 +856,7 @@ All packages use `"moduleResolution": "Bundler"` (via `node-library.json` tsconf
 |-------|-------|--------|
 | P0 | Foundation | ✅ **COMPLETE** — infra, types, db, auth, policy-client, audit, apps/api |
 | P1 | **The Differentiator** | ✅ **COMPLETE and end-to-end** — sql-validator, ai-service, query.submit, query.acknowledge, database-connection CRUD, approval-decision, tre-dispatcher, tre-executor, packages/secrets, packages/queue. All four risk paths (SAFE/WARNING/CRITICAL/SECURITY_INCIDENT) execute for real, not just classify; WARNING gets a real EXPLAIN-based simulation + self-acknowledgment gate (SQ-037/SQ-038). Only gap: no live DB migrated yet in this dev environment (Docker not running) |
-| P2 | Governance | ✅ **Complete.** Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017/SQ-055 partial), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059), org creation + invite flow (SQ-015/SQ-016) all done — `apps/web/app/admin` + `apps/web/app/audit-log` + `apps/web/app/login`. |
+| P2 | Governance | ✅ **Complete.** Audit viewer UI (SQ-058), custom-roles CRUD UI (SQ-017), member management CRUD (SQ-055 — `member.list`/`updateRole`/`remove` with last-owner protection + owner-role privilege-escalation boundary), environments CRUD + time-window policies (SQ-018/SQ-054), database-connections CRUD UI (SQ-019/SQ-021/SQ-022/SQ-023), PII column masking (SQ-052, was a long-standing no-op until this fix), result export (SQ-046), application rate limiting (SQ-059), org creation + invite flow with auto-accept-on-login and customRoleId propagation (SQ-015/SQ-016) all done — `apps/web/app/admin` + `apps/web/app/audit-log` + `apps/web/app/login`. |
 | P3 | Real Isolation | 🟡 In progress. `execute_write` jobs now run in their own `worker_threads` `Worker`, terminated after every job (`apps/tre-dispatcher`) — reads/test/capture-schema still go through the in-process path, matching the Warm-Pool/Ephemeral-Executor split in the docs. Not yet validated against a real live write (see the dispatcher section's "known sharp edge" note) and not yet a true OS-process/container boundary. Per-org queue concurrency limiting (SQ-060) done — every job now carries `orgId`, enforced via `MAX_CONCURRENT_JOBS_PER_ORG` + BullMQ's `DelayedError` redelivery pattern. Still 🔲: actual container isolation, Vault dynamic secrets replacing `packages/secrets` |
 | P4 | Cloud-Native | 🔲 k8s, Vercel, GitHub Actions CI/CD |
 | P5 | Observability | 🔲 OpenTelemetry, Prometheus/Grafana, Loki, Sentry, Terraform |

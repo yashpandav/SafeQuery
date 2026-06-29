@@ -89,6 +89,13 @@ export async function updateMemberRole(
   const decision = await checkOrganizationMember(deps.cerbosClient, toCerbosPrincipal(principal), { id: input.userId, orgId: principal.orgId }, ['update'])
   if (!decision.update) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to update organization members' })
 
+  if (input.platformRole !== undefined) {
+    const grantingOrRevokingOwner = input.platformRole === 'owner' || existing.platformRole === 'owner'
+    if (grantingOrRevokingOwner && principal.platformRole !== 'owner') {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Only an owner can grant or revoke the owner role' })
+    }
+  }
+
   if (input.customRoleId !== undefined && input.customRoleId !== null) {
     const role = await deps.db.query.customRoles.findFirst({
       where: and(eq(customRoles.id, input.customRoleId), eq(customRoles.orgId, principal.orgId)),

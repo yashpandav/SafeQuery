@@ -18,7 +18,10 @@ const MEMBER_ID = 'member-1'
 const ROLE_ID = 'role-1'
 const OTHER_ORG_ROLE_ID = 'role-other-org'
 
+const OWNER_ID = 'owner-1'
+
 const admin: MemberPrincipal = { userId: ADMIN_ID, orgId: ORG_ID, platformRole: 'admin' }
+const owner: MemberPrincipal = { userId: OWNER_ID, orgId: ORG_ID, platformRole: 'owner' }
 const analyst: MemberPrincipal = { userId: ANALYST_ID, orgId: ORG_ID, platformRole: 'analyst' }
 
 // Mirrors organization_member.yaml: only same_org_admin gets any action.
@@ -154,7 +157,7 @@ describe('updateMemberRole', () => {
     await expect(
       updateMemberRole(
         { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
-        admin,
+        owner,
         { userId: MEMBER_ID, platformRole: 'admin' },
       ),
     ).rejects.toMatchObject({ code: 'CONFLICT' })
@@ -165,15 +168,64 @@ describe('updateMemberRole', () => {
       ...fixtures({ platformRole: 'owner' }),
       organizationMembersList: [
         { orgId: ORG_ID, userId: MEMBER_ID, platformRole: 'owner', customRoleId: null, createdAt: new Date() },
-        { orgId: ORG_ID, userId: ADMIN_ID, platformRole: 'owner', customRoleId: null, createdAt: new Date() },
+        { orgId: ORG_ID, userId: OWNER_ID, platformRole: 'owner', customRoleId: null, createdAt: new Date() },
       ],
     })
     const result = await updateMemberRole(
       { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
-      admin,
+      owner,
       { userId: MEMBER_ID, platformRole: 'admin' },
     )
     expect(result.platformRole).toBe('admin')
+  })
+
+  it('rejects an admin granting themselves the owner role with FORBIDDEN (privilege escalation)', async () => {
+    const { db } = createMockDb(fixtures())
+    await expect(
+      updateMemberRole(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+        admin,
+        { userId: ADMIN_ID, platformRole: 'owner' },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('rejects an admin granting someone else the owner role with FORBIDDEN', async () => {
+    const { db } = createMockDb(fixtures())
+    await expect(
+      updateMemberRole(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+        admin,
+        { userId: MEMBER_ID, platformRole: 'owner' },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('rejects an admin demoting an owner with FORBIDDEN, even when not the last owner', async () => {
+    const { db } = createMockDb({
+      ...fixtures({ platformRole: 'owner' }),
+      organizationMembersList: [
+        { orgId: ORG_ID, userId: MEMBER_ID, platformRole: 'owner', customRoleId: null, createdAt: new Date() },
+        { orgId: ORG_ID, userId: OWNER_ID, platformRole: 'owner', customRoleId: null, createdAt: new Date() },
+      ],
+    })
+    await expect(
+      updateMemberRole(
+        { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+        admin,
+        { userId: MEMBER_ID, platformRole: 'admin' },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('allows an owner granting the owner role to someone else', async () => {
+    const { db } = createMockDb(fixtures())
+    const result = await updateMemberRole(
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID) },
+      owner,
+      { userId: MEMBER_ID, platformRole: 'owner' },
+    )
+    expect(result.platformRole).toBe('owner')
   })
 
   it('returns NOT_FOUND when the membership does not exist', async () => {

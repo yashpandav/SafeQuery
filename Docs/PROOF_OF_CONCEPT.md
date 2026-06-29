@@ -131,6 +131,19 @@ Each customer is an **organization** (tenant). There are two layers of roles.
 
 **Tenant isolation** is enforced at the database level via Postgres Row-Level Security keyed on `org_id` — the same technique SafeQuery sells to its customers, applied to its own control-plane data. No tenant can read another tenant's users, policies, audit logs, database connections, query history, or approval workflows.
 
+### Member lifecycle
+
+Membership in an org follows a four-step lifecycle:
+
+1. **Invite** — an Admin/Owner sends an invitation (email + platform role + optional custom role) via `invitation.create`. The invitation row carries `customRoleId` so the role is assigned atomically at acceptance, not as a separate post-join step.
+2. **Accept** — on every login `auth.exchangeToken` calls `acceptPendingInvitations()`, which matches the verified Keycloak email (case-insensitively) against all pending, non-expired invitations across every org, inserts the membership row with the invitation's `platformRole` and `customRoleId`, and deletes the invitation — whether or not the user was already a member (safe to re-run). No separate "click to accept" link is needed; acceptance is a side-effect of successful login.
+3. **Manage** — `member.updateRole` lets an Admin/Owner change a member's `platformRole` and/or `customRoleId` independently after they've joined. Two invariants are enforced in application code (not Cerbos, since they depend on relationships *between* members):
+   - **Last-owner protection**: demoting or removing the sole remaining `owner` is rejected with `CONFLICT`.
+   - **Owner-role boundary**: granting or revoking the `owner` role requires the *caller* to already be an `owner` — Cerbos's `same_org_admin` derived role covers both `admin` and `owner` identically (correct for every other resource), so this boundary must be enforced in application code or a plain admin could escalate themselves to owner.
+4. **Remove** — `member.remove` deletes the membership row outright. The last-owner check applies here too.
+
+Every state transition is recorded in the hash-chain audit log (`MEMBER_ADDED`, `MEMBER_ROLE_CHANGED`, `MEMBER_REMOVED`, `USER_INVITED`, `INVITATION_REVOKED`).
+
 ---
 
 ## 6. Database Connectivity Strategy
@@ -702,12 +715,14 @@ Treat as a later phase (it's worthless before the core pipeline is solid), but i
 - `packages/audit`: hash-chain log + verify-integrity endpoint.
 - **Goal: fully demoable against one database.**
 
-### Phase 2 — Governance
+### Phase 2 — Governance ✅ Complete
 
-- Multi-tenancy + invitations (Keycloak).
-- **Custom-roles CRUD** + role/policy editor UI (PII columns, environment + time policies, rate-limit knobs).
-- Approval workflow with reviewer re-authentication, showing exact dry-run affected rows.
-- Multiple DB connections per org with envelope-encrypted credentials.
+- Multi-tenancy: org creation (`organization.create`), invite flow (`invitation.create`/auto-accept-on-login with `customRoleId` propagation), and ongoing member management (`member.list`/`updateRole`/`remove`) with last-owner protection and owner-role privilege-escalation boundary.
+- **Custom-roles CRUD** + role/policy editor UI (PII masking default, export toggle, allowed tables/actions, environment + time-window policies, org-wide rate-limit knobs).
+- Approval workflow with reviewer re-authentication (Keycloak password re-grant), showing exact dry-run affected rows.
+- Multiple DB connections per org with envelope-encrypted credentials; schema capture via `information_schema`.
+- Audit log viewer with live hash-chain integrity check; `MEMBER_*` / `USER_INVITED` / `POLICY_UPDATED` / `RATE_LIMIT_EXCEEDED` audit actions all wired.
+- Result export (CSV/JSON, client-side, role-gated via `allowExport`).
 
 ### Phase 3 — Real Isolation
 
