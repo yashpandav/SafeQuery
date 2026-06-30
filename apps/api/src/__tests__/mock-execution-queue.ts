@@ -28,6 +28,7 @@ export function createMockExecutionQueue(overrides: Partial<JobResultMap> = {}):
       previewRows: [{ id: '1' }],
       executionMs: 5,
       committed: false,
+      lockConflict: false,
     },
   }
 

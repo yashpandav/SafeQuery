@@ -1,0 +1,27 @@
+# Dependencies — each Docker stage installs its own
+**/node_modules
+
+# Build outputs — built fresh inside Docker
+**/dist
+**/.next
+**/out
+
+# Turbo cache
+.turbo
+
+# Git
+.git
+.gitignore
+
+# Environment files — injected at runtime, never baked into images
+**/.env
+!**/.env.example
+
+# Editor / OS
+.vscode
+.idea
+**/.DS_Store
+**/Thumbs.db
+
+# Test artifacts
+**/coverage

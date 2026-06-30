@@ -1,0 +1,112 @@
+global:
+  image:
+    registry: ghcr.io/yashpandav
+    pullPolicy: IfNotPresent
+    tag: latest
+
+external:
+  databaseUrl: ""
+  redisUrl: "redis://redis:6379"
+  keycloakUrl: "http://keycloak:8080"
+  keycloakRealm: "safequery"
+  cerbosUrl: "http://cerbos:3592"
+  vaultAddr: ""
+
+secrets:
+  pasetoLocalKey: ""       
+  servicePrivateKey: "" 
+  servicePublicKey: ""  
+  openaiApiKey: ""
+  credentialMasterKey: ""  
+  vaultToken: ""         
+
+# ── apps/api ──────────────────────────────────────────────────────────────────
+api:
+  replicaCount: 2
+  image:
+    name: safequery-api
+  service:
+    port: 3001
+  corsOrigin: "https://safequery.example.com"
+  aiServiceUrl: "http://ai-service:3002"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# ── apps/ai-service ───────────────────────────────────────────────────────────
+aiService:
+  replicaCount: 1
+  image:
+    name: safequery-ai-service
+  service:
+    port: 3002
+  aiModel: "gpt-4o"
+  aiScreenModel: "gpt-4o-mini"
+  corsOrigin: "http://api:3001"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+# ── apps/tre-dispatcher ───────────────────────────────────────────────────────
+treDispatcher:
+  replicaCount: 1
+  image:
+    name: safequery-tre-dispatcher
+  workerConcurrency: 5
+  maxConcurrentJobsPerOrg: 3
+  statementTimeoutMs: 30000
+  lockTimeoutMs: 5000
+  defaultRowCap: 10000
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# ── apps/web ──────────────────────────────────────────────────────────────────
+web:
+  replicaCount: 2
+  image:
+    name: safequery-web
+  service:
+    port: 3000
+  apiUrl: "https://api.safequery.example.com"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: traefik   
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: safequery-tls
+  hosts:
+    api: api.safequery.example.com
+    web: safequery.example.com

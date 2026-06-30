@@ -33,7 +33,7 @@ export async function handleExecuteRead(
   cursorFactory: CursorFactory = defaultCursorFactory,
 ): Promise<ExecuteReadJobResult> {
   const start = Date.now()
-  const client: Client = clientFactory(data.connection)
+  const { client, revokeOnDone } = await clientFactory(data.connection)
   const rowCap = data.rowCap ?? env.DEFAULT_ROW_CAP
 
   try {
@@ -103,6 +103,7 @@ export async function handleExecuteRead(
     }
   } finally {
     await client.end().catch(() => {})
+    await revokeOnDone().catch(() => {})
   }
 }
 

@@ -2,13 +2,19 @@ import { describe, it, expect } from 'vitest'
 import { handleCaptureSchema, buildSnapshot } from '../lib/capture-schema'
 import { createFakeClient } from './fake-client'
 import type { ConnectionTarget } from '@repo/queue'
+import type { ClientFactory } from '../lib/pg-client'
 
 const connection: ConnectionTarget = {
   host: 'localhost',
   port: 5432,
   database: 'demo',
   ssl: false,
-  encryptedCredentials: 'irrelevant-for-this-handler', // capture-schema never decrypts; pg-client.ts does
+  encryptedCredentials: 'irrelevant-for-this-handler',
+}
+
+function fakeClientFactory(opts: Parameters<typeof createFakeClient>[0] = {}): ClientFactory {
+  const { client } = createFakeClient(opts)
+  return async () => ({ client, revokeOnDone: async () => { } })
 }
 
 describe('buildSnapshot', () => {
@@ -39,20 +45,20 @@ describe('buildSnapshot', () => {
 
 describe('handleCaptureSchema', () => {
   it('returns a snapshot built from information_schema rows', async () => {
-    const { client } = createFakeClient({
+    const factory = fakeClientFactory({
       onQuery: () => ({
         rows: [{ table_name: 'customers', column_name: 'id', data_type: 'uuid', is_nullable: 'NO' }],
       }),
     })
-    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, () => client)
+    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, factory)
 
     expect(result.success).toBe(true)
     expect(result.snapshot).toEqual({ customers: [{ column: 'id', type: 'uuid', nullable: false, isPii: false }] })
   })
 
   it('returns failure when the connection cannot be established', async () => {
-    const { client } = createFakeClient({ failConnect: new Error('no route to host') })
-    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, () => client)
+    const factory = fakeClientFactory({ failConnect: new Error('no route to host') })
+    const result = await handleCaptureSchema({ type: 'capture_schema', orgId: 'org-1', connection }, factory)
 
     expect(result.success).toBe(false)
     expect(result.error).toContain('no route to host')

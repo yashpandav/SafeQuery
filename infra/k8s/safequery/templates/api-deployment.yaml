@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "api" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "safequery.selectorLabels" (dict "component" "api" "Release" .Release) | nindent 8 }}
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        {{- include "safequery.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "safequery.image" (dict "Values" .Values "app" .Values.api) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            {{- include "safequery.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: {{ .Values.api.service.port | quote }}
+            - name: CORS_ORIGIN
+              value: {{ .Values.api.corsOrigin | quote }}
+            - name: AI_SERVICE_URL
+              value: {{ .Values.api.aiServiceUrl | quote }}
+            - name: KEYCLOAK_URL
+              value: {{ .Values.external.keycloakUrl | quote }}
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.external.keycloakRealm | quote }}
+            - name: CERBOS_URL
+              value: {{ .Values.external.cerbosUrl | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: REDIS_URL
+            - name: PASETO_LOCAL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: PASETO_LOCAL_KEY
+            - name: SERVICE_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: SERVICE_PRIVATE_KEY
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          # api writes nothing to disk; tmpdir covers any node_modules edge cases
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

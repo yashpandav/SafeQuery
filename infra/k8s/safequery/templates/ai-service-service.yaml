@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-service
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "safequery.selectorLabels" (dict "component" "ai-service" "Release" .Release) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.aiService.service.port }}
+      targetPort: http
+      protocol: TCP

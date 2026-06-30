@@ -7,6 +7,8 @@ import { users, organizationMembers } from '@repo/db/schema'
 import { writeAuditLog } from '@repo/audit'
 import { createTRPCRouter, baseProcedure, authedProcedure } from '../init'
 import { acceptPendingInvitations } from '../../lib/invitation-pipeline'
+import { logoutSession } from '../../lib/auth-pipeline'
+import { sessionBlocklist } from '../../lib/session-blocklist'
 import { env } from '../../env'
 
 export const authRouter = createTRPCRouter({
@@ -76,7 +78,8 @@ export const authRouter = createTRPCRouter({
     email: ctx.user.email,
     name: ctx.user.name,
   })),
-  logout: authedProcedure.mutation(() => {
+  logout: authedProcedure.mutation(async ({ ctx }) => {
+    await logoutSession({ db: ctx.db, blocklist: sessionBlocklist }, ctx.user.id, ctx.sessionId)
     return { success: true }
   }),
 })

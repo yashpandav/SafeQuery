@@ -1,0 +1,113 @@
+# NetworkPolicy: deny all cross-pod traffic by default, then allow only the
+# specific paths the application actually needs.
+#
+# Ingress topology:
+#   browser → ingress → web (port 3000)
+#   browser → ingress → api (port 3001)
+#   api → ai-service (port 3002, cluster-internal only)
+#   api → Redis (not managed by this chart)
+#   ai-service → OpenAI (egress to internet, allowed by default)
+#   tre-dispatcher → Redis
+#   tre-dispatcher → customer DBs (egress to internet/VPC, allowed by default)
+
+---
+# Default deny all ingress for every pod in the release namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+
+---
+# api: accept from ingress controller only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-api
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "api" "Release" .Release) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+
+---
+# ai-service: accept from api pods only (never from the internet directly)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-ai-service
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "ai-service" "Release" .Release) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "safequery.selectorLabels" (dict "component" "api" "Release" .Release) | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.aiService.service.port }}
+
+---
+# web: accept from ingress controller only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-web
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "web" "Release" .Release) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: {{ .Values.web.service.port }}
+
+---
+# tre-dispatcher: no inbound connections (consumer-only; it connects out to Redis and customer DBs)
+# The default-deny policy above already blocks all ingress; this policy is a no-op
+# but makes the intent explicit and survives if the default-deny is removed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-isolate-tre-dispatcher
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "tre-dispatcher" "Release" .Release) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress: []

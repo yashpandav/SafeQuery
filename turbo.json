@@ -24,7 +24,9 @@
     "DEFAULT_ROW_CAP",
     "WORKER_CONCURRENCY",
     "MAX_CONCURRENT_JOBS_PER_ORG",
-    "LOG_LEVEL"
+    "LOG_LEVEL",
+    "VAULT_ADDR",
+    "VAULT_TOKEN"
   ],
   "tasks": {
     "build": {

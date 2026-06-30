@@ -1,4 +1,3 @@
-import type { Client } from 'pg'
 import type { CaptureSchemaJobData, CaptureSchemaJobResult, ColumnDefinition } from '@repo/queue'
 import { defaultClientFactory, type ClientFactory } from './pg-client'
 import { logger } from '../logger'
@@ -35,7 +34,7 @@ export async function handleCaptureSchema(
   data: CaptureSchemaJobData,
   clientFactory: ClientFactory = defaultClientFactory,
 ): Promise<CaptureSchemaJobResult> {
-  const client: Client = clientFactory(data.connection)
+  const { client, revokeOnDone } = await clientFactory(data.connection)
   try {
     await client.connect()
     const result = await client.query<InformationSchemaRow>(`
@@ -53,5 +52,6 @@ export async function handleCaptureSchema(
     return { success: false, error, snapshot: null }
   } finally {
     await client.end().catch(() => {})
+    await revokeOnDone().catch(() => {})
   }
 }

@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-tre-dispatcher
+  labels:
+    {{- include "safequery.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tre-dispatcher
+spec:
+  # Single replica: horizontal scaling requires careful per-org concurrency coordination.
+  # Multiple replicas each maintain their own MAX_CONCURRENT_JOBS_PER_ORG counter
+  # which would undercount active jobs; use a single replica or a shared counter
+  # backed by Redis before scaling this component.
+  replicas: {{ .Values.treDispatcher.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "safequery.selectorLabels" (dict "component" "tre-dispatcher" "Release" .Release) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "safequery.selectorLabels" (dict "component" "tre-dispatcher" "Release" .Release) | nindent 8 }}
+        app.kubernetes.io/component: tre-dispatcher
+    spec:
+      securityContext:
+        {{- include "safequery.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: tre-dispatcher
+          image: {{ include "safequery.image" (dict "Values" .Values "app" .Values.treDispatcher) }}
+          imagePullPolicy: {{ .Values.global.image.pullPolicy }}
+          securityContext:
+            {{- include "safequery.containerSecurityContext" . | nindent 12 }}
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.treDispatcher.workerConcurrency | quote }}
+            - name: MAX_CONCURRENT_JOBS_PER_ORG
+              value: {{ .Values.treDispatcher.maxConcurrentJobsPerOrg | quote }}
+            - name: STATEMENT_TIMEOUT_MS
+              value: {{ .Values.treDispatcher.statementTimeoutMs | quote }}
+            - name: LOCK_TIMEOUT_MS
+              value: {{ .Values.treDispatcher.lockTimeoutMs | quote }}
+            - name: DEFAULT_ROW_CAP
+              value: {{ .Values.treDispatcher.defaultRowCap | quote }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: REDIS_URL
+            # CREDENTIAL_MASTER_KEY is only injected into this pod — never api, ai-service, or web.
+            - name: CREDENTIAL_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: CREDENTIAL_MASTER_KEY
+            {{- if .Values.external.vaultAddr }}
+            - name: VAULT_ADDR
+              value: {{ .Values.external.vaultAddr | quote }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: VAULT_TOKEN
+            {{- end }}
+          resources:
+            {{- toYaml .Values.treDispatcher.resources | nindent 12 }}
+          # write jobs spawn worker_threads that need /tmp; the executor also
+          # needs a writable working directory for pg-cursor streaming
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

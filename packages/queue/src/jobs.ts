@@ -24,6 +24,7 @@ export interface ColumnDefinition {
 export interface TestConnectionJobData {
   type: typeof JOB_NAMES.TEST_CONNECTION
   orgId: string
+  connectionId: string
   host: string
   port: number
   database: string
@@ -81,6 +82,9 @@ export interface ExecuteWriteJobResult {
   previewRows: Record<string, unknown>[]
   executionMs: number
   committed: boolean
+  // true when the failure was a Postgres lock_timeout (55P03) or deadlock (40P01) —
+  // lets the caller write a LOCK_CONFLICT audit event rather than a generic QUERY_FAILED.
+  lockConflict: boolean
 }
 
 export type ExecutionJobData = TestConnectionJobData | CaptureSchemaJobData | ExecuteReadJobData | ExecuteWriteJobData

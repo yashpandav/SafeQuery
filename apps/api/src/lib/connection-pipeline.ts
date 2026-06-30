@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { eq, and } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 import { databaseConnections, environments, schemaSnapshots } from '@repo/db/schema'
@@ -57,8 +58,11 @@ export async function createConnection(
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Environment not found' })
   }
 
+  const connectionId = randomUUID()
+
   const testResult = await deps.executionQueue.run({
     type: JOB_NAMES.TEST_CONNECTION,
+    connectionId,
     orgId: principal.orgId,
     host: input.host,
     port: input.port,
@@ -75,6 +79,7 @@ export async function createConnection(
   const [connection] = await deps.db
     .insert(databaseConnections)
     .values({
+      id: connectionId,
       orgId: principal.orgId,
       environmentId: input.environmentId,
       name: input.name,

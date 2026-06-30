@@ -9,6 +9,8 @@ const envSchema = z.object({
   STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   LOCK_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
   DEFAULT_ROW_CAP: z.coerce.number().int().positive().default(10_000),
+  VAULT_ADDR: z.string().url().optional(),
+  VAULT_TOKEN: z.string().optional(),
 })
 
 const parsed = envSchema.safeParse(process.env)

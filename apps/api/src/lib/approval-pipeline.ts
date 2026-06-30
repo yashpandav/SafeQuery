@@ -223,10 +223,10 @@ export async function decideApproval(
     await writeAuditLog(deps.db, {
       orgId: principal.orgId,
       actorId: principal.userId,
-      action: 'QUERY_FAILED',
+      action: writeResult.lockConflict ? 'LOCK_CONFLICT' : 'QUERY_FAILED',
       resourceType: 'query_log',
       resourceId: queryLog.id,
-      metadata: { error: writeResult.error },
+      metadata: { error: writeResult.error, lockConflict: writeResult.lockConflict },
     })
   }
 

@@ -121,7 +121,7 @@ describe('decideApproval', () => {
   it('APPROVED but the commit fails: query_log marked FAILED, approval still recorded as APPROVED', async () => {
     const { db, updatedByTable, insertedByTable } = createMockDb(baseFixtures())
     const { client: executionQueue } = createMockExecutionQueue({
-      [JOB_NAMES.EXECUTE_WRITE]: { success: false, error: 'deadlock detected', affectedRows: 0, previewRows: [], executionMs: 1, committed: false },
+      [JOB_NAMES.EXECUTE_WRITE]: { success: false, error: 'write error', affectedRows: 0, previewRows: [], executionMs: 1, committed: false, lockConflict: false },
     })
     const result = await decideApproval(
       { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
@@ -129,9 +129,25 @@ describe('decideApproval', () => {
       { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
     )
 
-    expect(result).toMatchObject({ status: 'APPROVED', executed: false, error: 'deadlock detected' })
-    expect(updatedByTable.get(queryLogs)?.[0]).toMatchObject({ status: 'FAILED', errorMessage: 'deadlock detected' })
+    expect(result).toMatchObject({ status: 'APPROVED', executed: false, error: 'write error' })
+    expect(updatedByTable.get(queryLogs)?.[0]).toMatchObject({ status: 'FAILED', errorMessage: 'write error' })
     expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['APPROVAL_APPROVED', 'QUERY_FAILED'])
+  })
+
+  it('APPROVED but the commit hits a lock timeout: audits LOCK_CONFLICT instead of QUERY_FAILED', async () => {
+    const { db, updatedByTable, insertedByTable } = createMockDb(baseFixtures())
+    const { client: executionQueue } = createMockExecutionQueue({
+      [JOB_NAMES.EXECUTE_WRITE]: { success: false, error: 'could not obtain lock on row in relation "customers"', affectedRows: 0, previewRows: [], executionMs: 1, committed: false, lockConflict: true },
+    })
+    const result = await decideApproval(
+      { db: db as never, cerbosClient: createAllowAllCerbosClient(ORG_ID), executionQueue, verifyReauthToken },
+      reviewer,
+      { approvalRequestId: APPROVAL_ID, decision: 'APPROVED', reauthToken: VALID_REAUTH_TOKEN },
+    )
+
+    expect(result).toMatchObject({ status: 'APPROVED', executed: false })
+    expect(updatedByTable.get(queryLogs)?.[0]).toMatchObject({ status: 'FAILED' })
+    expect(insertedByTable.get(auditLogs)?.map((a) => a.action)).toEqual(['APPROVAL_APPROVED', 'LOCK_CONFLICT'])
   })
 
   it('four-eyes: a submitter cannot approve their own request', async () => {

@@ -1,8 +1,21 @@
-import type { Client } from 'pg'
 import type { ExecuteWriteJobData, ExecuteWriteJobResult } from '@repo/queue'
 import { defaultClientFactory, type ClientFactory } from './pg-client'
 import { env } from '../env'
 import { logger } from '../logger'
+
+const LOCK_CONFLICT_CODES = new Set([
+  '55P03',
+  '40P01',
+])
+
+function isLockConflict(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    LOCK_CONFLICT_CODES.has((err as { code: unknown }).code as string)
+  )
+}
 
 function connectionContext(data: ExecuteWriteJobData) {
   return { host: data.connection.host, port: data.connection.port, database: data.connection.database, dryRun: data.dryRun }
@@ -13,7 +26,7 @@ export async function handleExecuteWrite(
   clientFactory: ClientFactory = defaultClientFactory,
 ): Promise<ExecuteWriteJobResult> {
   const start = Date.now()
-  const client: Client = clientFactory(data.connection)
+  const { client, revokeOnDone } = await clientFactory(data.connection, 'write')
 
   try {
     await client.connect()
@@ -33,11 +46,13 @@ export async function handleExecuteWrite(
       previewRows: result.rows,
       executionMs,
       committed: !data.dryRun,
+      lockConflict: false,
     }
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => {})
+    await client.query('ROLLBACK').catch(() => { })
+    const lockConflict = isLockConflict(err)
     const error = err instanceof Error ? err.message : 'Write execution failed'
-    logger.error({ ...connectionContext(data), err: error }, 'execute_write failed')
+    logger.error({ ...connectionContext(data), err: error, lockConflict }, 'execute_write failed')
     return {
       success: false,
       error,
@@ -45,8 +60,10 @@ export async function handleExecuteWrite(
       previewRows: [],
       executionMs: Date.now() - start,
       committed: false,
+      lockConflict,
     }
   } finally {
-    await client.end().catch(() => {})
+    await client.end().catch(() => { })
+    await revokeOnDone().catch(() => { })
   }
 }

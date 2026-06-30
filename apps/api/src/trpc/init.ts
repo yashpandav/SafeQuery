@@ -5,6 +5,7 @@ import { extractBearerToken, verifySession } from '@repo/auth'
 import { users, organizationMembers } from '@repo/db/schema'
 import { db } from '../lib/db'
 import { cerbos } from '../lib/cerbos'
+import { sessionBlocklist } from '../lib/session-blocklist'
 import { env } from '../env'
 
 export async function createTRPCContext({ req, res }: { req: Request; res: Response }) {
@@ -16,15 +17,14 @@ export async function createTRPCContext({ req, res }: { req: Request; res: Respo
   if (token) {
     try {
       const payload = await verifySession(token, env.PASETO_LOCAL_KEY)
-      user = await db.query.users.findFirst({ where: eq(users.id, payload.userId) }) ?? null
-      sessionId = payload.sessionId
+      if (!await sessionBlocklist.isBlocked(payload.sessionId)) {
+        user = await db.query.users.findFirst({ where: eq(users.id, payload.userId) }) ?? null
+        sessionId = payload.sessionId
+      }
     } catch {
-      // Invalid or expired token — user stays null; authedProcedure will reject
     }
   }
 
-  // Org context is passed per-request via X-Org-Id header.
-  // Validated against the user's memberships inside orgProcedure.
   const orgIdHeader = req.headers['x-org-id']
   const orgId = typeof orgIdHeader === 'string' && orgIdHeader ? orgIdHeader : null
 

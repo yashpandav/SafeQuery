@@ -49,5 +49,6 @@ export const AuditAction = z.enum([
   'POLICY_DELETED',
   'SECURITY_INCIDENT_DETECTED',
   'RATE_LIMIT_EXCEEDED',
+  'LOCK_CONFLICT',
 ])
 export type AuditAction = z.infer<typeof AuditAction>
