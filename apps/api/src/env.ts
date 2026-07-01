@@ -15,6 +15,8 @@ const envSchema = z.object({
   SERVICE_PRIVATE_KEY: z.string().min(1, 'SERVICE_PRIVATE_KEY is required'),
   REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
   CORS_ORIGIN: z.string().url().default('http://localhost:3000'),
+  KEYCLOAK_ADMIN_USER: z.string().min(1).default('admin'),
+  KEYCLOAK_ADMIN_PASSWORD: z.string().min(1, 'KEYCLOAK_ADMIN_PASSWORD is required'),
 })
 
 const parsed = envSchema.safeParse(process.env)

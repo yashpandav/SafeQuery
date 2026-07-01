@@ -8,7 +8,6 @@ import { useTRPC } from '../../trpc/client'
 import { useSession } from '../../lib/session'
 import { Card } from '../components/card'
 import { Button } from '../components/button'
-import { getKeycloakToken } from '../../lib/keycloak'
 
 function slugify(name: string): string {
   return name
@@ -17,24 +16,54 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-export default function LoginPage() {
+export default function RegisterPage() {
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [awaitingOrgSelection, setAwaitingOrgSelection] = useState(false)
   const [orgName, setOrgName] = useState('')
   const [orgSlug, setOrgSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [createOrgError, setCreateOrgError] = useState<string | null>(null)
+
   const router = useRouter()
   const trpc = useTRPC()
   const { session, setSession } = useSession()
-  const exchangeToken = useMutation(trpc.auth.exchangeToken.mutationOptions())
+  const register = useMutation(trpc.auth.register.mutationOptions())
   const createOrganization = useMutation(trpc.organization.create.mutationOptions())
   const organizations = useQuery({
     ...trpc.organization.list.queryOptions(),
     enabled: awaitingOrgSelection && Boolean(session),
   })
+
+  async function handleRegisterSubmit(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (password !== confirmPassword) {
+      setError('Passwords do not match')
+      return
+    }
+    try {
+      const result = await register.mutateAsync({ email, password, firstName, lastName })
+      setSession({
+        sessionToken: result.sessionToken,
+        userId: result.user.id,
+        email: result.user.email,
+        orgId: '',
+        platformRole: '',
+      })
+      setAwaitingOrgSelection(true)
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'message' in err) {
+        setError((err as { message: string }).message)
+      } else {
+        setError('Registration failed. Please try again.')
+      }
+    }
+  }
 
   async function handleCreateOrg(e: FormEvent) {
     e.preventDefault()
@@ -44,19 +73,6 @@ export default function LoginPage() {
       selectOrganization(org.id, org.platformRole)
     } catch (err) {
       setCreateOrgError(err instanceof Error ? err.message : 'Failed to create organization')
-    }
-  }
-
-  async function handleCredentialsSubmit(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    try {
-      const keycloakToken = await getKeycloakToken(email, password)
-      const exchanged = await exchangeToken.mutateAsync({ keycloakToken })
-      setSession({ sessionToken: exchanged.sessionToken, userId: exchanged.user.id, email: exchanged.user.email, orgId: '', platformRole: '' })
-      setAwaitingOrgSelection(true)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed')
     }
   }
 
@@ -77,7 +93,9 @@ export default function LoginPage() {
     return (
       <Card className="mx-auto mt-12 max-w-sm">
         <h1 className="text-xl font-semibold">Select an organization</h1>
-        <p className="mt-1 mb-4 text-sm text-muted">Pulled live from your memberships — nothing pasted or hardcoded.</p>
+        <p className="mt-1 mb-4 text-sm text-muted">
+          Create a new workspace or select one you were invited to.
+        </p>
 
         {organizations.isPending && <p className="text-sm text-muted">Loading…</p>}
         {organizations.isError && (
@@ -88,9 +106,13 @@ export default function LoginPage() {
         {organizations.data?.length === 0 && (
           <div className="mb-4 flex flex-col gap-3">
             <p className="text-sm text-muted">
-              You are not a member of any organization yet. Ask an Owner/Admin to invite you, or create your own below.
+              Create your first workspace to get started. You can invite teammates after.
             </p>
-            <form onSubmit={handleCreateOrg} aria-label="Create an organization" className="flex flex-col gap-3 rounded-lg border border-border p-3">
+            <form
+              onSubmit={handleCreateOrg}
+              aria-label="Create an organization"
+              className="flex flex-col gap-3 rounded-lg border border-border p-3"
+            >
               <div className="flex flex-col gap-1">
                 <label htmlFor="org-name" className="text-sm text-muted">
                   Organization name
@@ -154,15 +176,47 @@ export default function LoginPage() {
     )
   }
 
-  const submitting = exchangeToken.isPending
+  const submitting = register.isPending
 
   return (
     <Card className="mx-auto mt-12 max-w-sm">
-      <h1 className="text-xl font-semibold">Sign in</h1>
+      <h1 className="text-xl font-semibold">Create an account</h1>
       <p className="mt-1 mb-4 text-sm text-muted">
-        Dev-only direct grant against Keycloak — production would use OIDC redirect + PKCE instead.
+        Free to start. Bring your own database and connect it in minutes.
       </p>
-      <form onSubmit={handleCredentialsSubmit} aria-label="Sign in form" className="flex flex-col gap-3">
+      <form onSubmit={handleRegisterSubmit} aria-label="Create account form" className="flex flex-col gap-3">
+        <div className="flex gap-3">
+          <div className="flex flex-1 flex-col gap-1">
+            <label htmlFor="first-name" className="text-sm text-muted">
+              First name
+            </label>
+            <input
+              id="first-name"
+              type="text"
+              required
+              aria-required="true"
+              autoComplete="given-name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className="rounded-lg border border-border bg-transparent px-3 py-2"
+            />
+          </div>
+          <div className="flex flex-1 flex-col gap-1">
+            <label htmlFor="last-name" className="text-sm text-muted">
+              Last name
+            </label>
+            <input
+              id="last-name"
+              type="text"
+              required
+              aria-required="true"
+              autoComplete="family-name"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className="rounded-lg border border-border bg-transparent px-3 py-2"
+            />
+          </div>
+        </div>
         <div className="flex flex-col gap-1">
           <label htmlFor="email" className="text-sm text-muted">
             Email
@@ -172,6 +226,7 @@ export default function LoginPage() {
             type="email"
             required
             aria-required="true"
+            autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="rounded-lg border border-border bg-transparent px-3 py-2"
@@ -186,8 +241,26 @@ export default function LoginPage() {
             type="password"
             required
             aria-required="true"
+            autoComplete="new-password"
+            minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            className="rounded-lg border border-border bg-transparent px-3 py-2"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label htmlFor="confirm-password" className="text-sm text-muted">
+            Confirm password
+          </label>
+          <input
+            id="confirm-password"
+            type="password"
+            required
+            aria-required="true"
+            autoComplete="new-password"
+            minLength={8}
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
             className="rounded-lg border border-border bg-transparent px-3 py-2"
           />
         </div>
@@ -197,13 +270,13 @@ export default function LoginPage() {
           </div>
         )}
         <Button type="submit" variant="primary" disabled={submitting}>
-          {submitting ? 'Signing in…' : 'Sign in'}
+          {submitting ? 'Creating account…' : 'Create account'}
         </Button>
       </form>
       <p className="mt-4 text-center text-sm text-muted">
-        Don&apos;t have an account?{' '}
-        <Link href="/register" className="font-medium text-ink underline-offset-2 hover:underline">
-          Create one
+        Already have an account?{' '}
+        <Link href="/login" className="font-medium text-ink underline-offset-2 hover:underline">
+          Sign in
         </Link>
       </p>
     </Card>

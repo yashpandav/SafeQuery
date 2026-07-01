@@ -9,6 +9,7 @@ import { createTRPCRouter, baseProcedure, authedProcedure } from '../init'
 import { acceptPendingInvitations } from '../../lib/invitation-pipeline'
 import { logoutSession } from '../../lib/auth-pipeline'
 import { sessionBlocklist } from '../../lib/session-blocklist'
+import { createKeycloakUser } from '../../lib/keycloak-admin'
 import { env } from '../../env'
 
 export const authRouter = createTRPCRouter({
@@ -73,6 +74,53 @@ export const authRouter = createTRPCRouter({
         user: { id: user.id, email: user.email, name: user.name },
       }
     }),
+  register: baseProcedure
+    .input(
+      z.object({
+        email: z.string().email(),
+        password: z.string().min(8, 'Password must be at least 8 characters'),
+        firstName: z.string().min(1).trim(),
+        lastName: z.string().min(1).trim(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const keycloakId = await createKeycloakUser(
+        input.email,
+        input.password,
+        input.firstName,
+        input.lastName,
+      )
+
+      const [user] = await ctx.db
+        .insert(users)
+        .values({
+          keycloakId,
+          email: input.email.toLowerCase(),
+          name: `${input.firstName} ${input.lastName}`.trim(),
+        })
+        .onConflictDoUpdate({
+          target: users.keycloakId,
+          set: {
+            email: input.email.toLowerCase(),
+            name: `${input.firstName} ${input.lastName}`.trim(),
+            updatedAt: new Date(),
+          },
+        })
+        .returning()
+
+      if (!user) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
+
+      await acceptPendingInvitations({ db: ctx.db }, user.id, user.email)
+
+      const sessionId = randomUUID()
+      const sessionToken = await signSession({ userId: user.id, sessionId }, env.PASETO_LOCAL_KEY)
+
+      return {
+        sessionToken,
+        user: { id: user.id, email: user.email, name: user.name },
+      }
+    }),
+
   me: authedProcedure.query(({ ctx }) => ({
     id: ctx.user.id,
     email: ctx.user.email,
