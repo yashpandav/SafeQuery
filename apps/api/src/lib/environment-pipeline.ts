@@ -6,7 +6,7 @@ import type { CerbosClient, CerbosPrincipal } from '@repo/policy-client'
 import { checkEnvironment } from '@repo/policy-client'
 import { writeAuditLog } from '@repo/audit'
 import { isWithinWriteWindow } from '@repo/sql-validator'
-import type { EnvironmentType, UpdateEnvironmentType, UpdateEnvironmentWriteWindow, PlatformRole } from '@repo/types'
+import type { EnvironmentType, UpdateEnvironmentType, UpdateEnvironmentWriteWindow, PlatformRole, CreateEnvironment } from '@repo/types'
 
 export interface EnvironmentPipelineDeps {
   db: DbClient
@@ -64,6 +64,34 @@ function toSummary(row: typeof environments.$inferSelect): EnvironmentSummary {
     withinWriteWindowNow: writeWindow ? isWithinWriteWindow(new Date(), writeWindow) : null,
     createdAt: row.createdAt,
   }
+}
+
+export async function createEnvironment(
+  deps: EnvironmentPipelineDeps,
+  principal: EnvironmentPrincipal,
+  input: CreateEnvironment,
+): Promise<EnvironmentSummary> {
+  const decision = await checkEnvironment(deps.cerbosClient, toCerbosPrincipal(principal), { id: 'new', orgId: principal.orgId }, ['create'])
+  if (!decision.create) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to create environments' })
+
+  const existing = await deps.db.query.environments.findFirst({
+    where: and(eq(environments.orgId, principal.orgId), eq(environments.name, input.name)),
+  })
+  if (existing) throw new TRPCError({ code: 'CONFLICT', message: `An environment named "${input.name}" already exists` })
+
+  const [created] = await deps.db.insert(environments).values({ orgId: principal.orgId, name: input.name, type: input.type }).returning()
+  if (!created) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR' })
+
+  await writeAuditLog(deps.db, {
+    orgId: principal.orgId,
+    actorId: principal.userId,
+    action: 'ENVIRONMENT_CREATED',
+    resourceType: 'environment',
+    resourceId: created.id,
+    metadata: { name: created.name, type: created.type },
+  })
+
+  return toSummary(created)
 }
 
 export async function listEnvironments(deps: EnvironmentPipelineDeps, principal: EnvironmentPrincipal): Promise<EnvironmentSummary[]> {

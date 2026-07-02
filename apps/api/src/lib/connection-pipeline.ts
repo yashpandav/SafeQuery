@@ -104,6 +104,11 @@ export async function createConnection(
   return toMetadata(connection)
 }
 export async function listConnections(deps: ConnectionPipelineDeps, principal: ConnectionPrincipal): Promise<DatabaseConnectionMetadata[]> {
+  const allowed = await checkDatabaseConnection(deps.cerbosClient, toCerbosPrincipal(principal), { id: 'list', orgId: principal.orgId }, ['read_metadata'])
+  if (!allowed.read_metadata) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to list database connections' })
+  }
+
   const rows = await deps.db.query.databaseConnections.findMany({
     where: eq(databaseConnections.orgId, principal.orgId),
   })

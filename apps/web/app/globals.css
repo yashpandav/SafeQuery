@@ -1,32 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 @import 'tailwindcss';
 
 @theme {
-  --color-background: #fafaf9;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  --color-background: #f7f6f4;
   --color-surface: #ffffff;
   --color-foreground: #111210;
-  --color-border: #e4e4e1;
-  --color-muted: #6b6b66;
+  --color-border: #e3e2df;
+  --color-muted: #78776f;
   --color-ink: #111210;
   --color-ink-hover: #2a2b27;
 
   --color-safe: #15803d;
-  --color-safe-bg: #ecfdf3;
-  --color-warning: #b45309;
-  --color-warning-bg: #fef7e6;
+  --color-safe-bg: #ecfdf5;
+  --color-warning: #92400e;
+  --color-warning-bg: #fef3c7;
   --color-critical: #b91c1c;
-  --color-critical-bg: #fdedec;
-  --color-incident: #1d4ed8;
-  --color-incident-bg: #eaf0fe;
+  --color-critical-bg: #fef2f2;
+  --color-incident: #1e40af;
+  --color-incident-bg: #eff6ff;
   --color-neutral: #57534e;
-  --color-neutral-bg: #f0efed;
+  --color-neutral-bg: #f5f4f2;
 
-  /* The one deliberate dark surface in the system (SQL code chips) — fixed, doesn't flip with theme. */
   --color-code-bg: #111210;
   --color-code-fg: #e5e5e1;
+
+  --radius: 8px;
 }
 
-html,
-body {
+html, body {
   max-width: 100vw;
   overflow-x: hidden;
 }
@@ -34,10 +37,39 @@ body {
 body {
   color: var(--color-foreground);
   background: var(--color-background);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--color-ink);
+  box-shadow: 0 0 0 3px rgb(17 18 16 / 0.08);
 }
 
 *:focus-visible {
   outline: 2px solid var(--color-ink);
   outline-offset: 2px;
 }
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }

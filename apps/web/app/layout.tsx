@@ -1,20 +1,21 @@
+import type { Metadata } from 'next'
 import { TRPCReactProvider } from '../trpc/client'
 import { SessionProvider } from '../lib/session'
-import { NavBar } from './nav-bar'
+import { Shell } from './shell'
 import './globals.css'
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode
-}>) {
+export const metadata: Metadata = {
+  title: 'SafeQuery',
+  description: 'AI database governance — validate, route, and audit every query.',
+}
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body>
         <SessionProvider>
           <TRPCReactProvider>
-            <NavBar />
-            <main className="mx-auto max-w-2xl p-6">{children}</main>
+            <Shell>{children}</Shell>
           </TRPCReactProvider>
         </SessionProvider>
       </body>

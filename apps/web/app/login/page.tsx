@@ -75,7 +75,7 @@ export default function LoginPage() {
 
   if (awaitingOrgSelection) {
     return (
-      <Card className="mx-auto mt-12 max-w-sm">
+      <Card className="w-full max-w-sm">
         <h1 className="text-xl font-semibold">Select an organization</h1>
         <p className="mt-1 mb-4 text-sm text-muted">Pulled live from your memberships — nothing pasted or hardcoded.</p>
 
@@ -157,7 +157,7 @@ export default function LoginPage() {
   const submitting = exchangeToken.isPending
 
   return (
-    <Card className="mx-auto mt-12 max-w-sm">
+    <Card className="w-full max-w-sm">
       <h1 className="text-xl font-semibold">Sign in</h1>
       <p className="mt-1 mb-4 text-sm text-muted">
         Dev-only direct grant against Keycloak — production would use OIDC redirect + PKCE instead.

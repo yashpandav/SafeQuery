@@ -91,7 +91,7 @@ export default function RegisterPage() {
 
   if (awaitingOrgSelection) {
     return (
-      <Card className="mx-auto mt-12 max-w-sm">
+      <Card className="w-full max-w-sm">
         <h1 className="text-xl font-semibold">Select an organization</h1>
         <p className="mt-1 mb-4 text-sm text-muted">
           Create a new workspace or select one you were invited to.

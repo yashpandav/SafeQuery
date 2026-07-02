@@ -89,6 +89,27 @@ services:
     networks:
       - safequery-net
 
+  postgres-sample:
+    image: postgres:16-alpine
+    container_name: safequery-postgres-sample
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${SAMPLE_DB_USER:-sampleuser}
+      POSTGRES_PASSWORD: ${SAMPLE_DB_PASSWORD:-samplepass}
+      POSTGRES_DB: ${SAMPLE_DB_NAME:-sampledb}
+    ports:
+      - "${SAMPLE_DB_PORT:-5435}:5432"
+    volumes:
+      - postgres_sample_data:/var/lib/postgresql/data
+      - ./postgres-sample/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - safequery-net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${SAMPLE_DB_USER:-sampleuser} -d ${SAMPLE_DB_NAME:-sampledb}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   vault:
     image: hashicorp/vault:1.17
     container_name: safequery-vault
@@ -102,6 +123,8 @@ services:
       VAULT_LOG_LEVEL: info
     ports:
       - "${VAULT_PORT:-8200}:8200"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - safequery-net
     healthcheck:
@@ -177,6 +200,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  postgres_sample_data:
     driver: local
   redis_data:
     driver: local

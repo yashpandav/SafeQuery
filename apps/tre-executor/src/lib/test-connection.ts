@@ -39,25 +39,32 @@ export async function handleTestConnection(
     await client.query('SELECT 1')
 
     if (vaultClient) {
-      await vaultClient.registerConnection({
-        connectionId: data.connectionId,
-        host: data.host,
-        port: data.port,
-        database: data.database,
-        username: data.username,
-        password: data.password,
-        ssl: data.ssl,
-      })
-      const encryptedCredentials = JSON.stringify({ type: 'vault', connectionId: data.connectionId })
-      logger.info({ ...connectionContext(data), vault: true }, 'test_connection succeeded (Vault)')
-      return { success: true, error: null, encryptedCredentials }
+      try {
+        await vaultClient.registerConnection({
+          connectionId: data.connectionId,
+          host: data.host,
+          port: data.port,
+          database: data.database,
+          username: data.username,
+          password: data.password,
+          ssl: data.ssl,
+        })
+        const encryptedCredentials = JSON.stringify({ type: 'vault', connectionId: data.connectionId })
+        logger.info({ ...connectionContext(data), vault: true }, 'test_connection succeeded (Vault)')
+        return { success: true, error: null, encryptedCredentials }
+      } catch (vaultErr) {
+        logger.warn(
+          { ...connectionContext(data), err: vaultErr instanceof Error ? vaultErr.message : String(vaultErr) },
+          'Vault registration failed — falling back to envelope encryption',
+        )
+      }
     }
 
     const encryptedCredentials = encryptDatabaseCredentials(
       { username: data.username, password: data.password },
       env.CREDENTIAL_MASTER_KEY,
     )
-    logger.info(connectionContext(data), 'test_connection succeeded')
+    logger.info({ ...connectionContext(data), vault: false }, 'test_connection succeeded')
     return { success: true, error: null, encryptedCredentials }
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Connection failed'

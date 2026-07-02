@@ -68,6 +68,27 @@ async function composeSummaries(
     .sort((a, b) => a.email.localeCompare(b.email))
 }
 
+export interface MyMembership {
+  customRoleId: string | null
+  customRoleName: string | null
+  platformRole: PlatformRole
+}
+
+export async function getMyMembership(deps: MemberPipelineDeps, principal: MemberPrincipal): Promise<MyMembership> {
+  const membership = await deps.db.query.organizationMembers.findFirst({
+    where: and(eq(organizationMembers.orgId, principal.orgId), eq(organizationMembers.userId, principal.userId)),
+  })
+  if (!membership) throw new TRPCError({ code: 'NOT_FOUND', message: 'Membership not found' })
+
+  let customRoleName: string | null = null
+  if (membership.customRoleId) {
+    const role = await deps.db.query.customRoles.findFirst({ where: eq(customRoles.id, membership.customRoleId) })
+    customRoleName = role?.name ?? null
+  }
+
+  return { customRoleId: membership.customRoleId, customRoleName, platformRole: membership.platformRole as PlatformRole }
+}
+
 export async function listMembers(deps: MemberPipelineDeps, principal: MemberPrincipal): Promise<MemberSummary[]> {
   const decision = await checkOrganizationMember(deps.cerbosClient, toCerbosPrincipal(principal), { id: 'list', orgId: principal.orgId }, ['read'])
   if (!decision.read) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not authorized to view organization members' })
